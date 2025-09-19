@@ -18,6 +18,62 @@
 #include <lapack.h>
 #endif
 
+#include <type_traits>
+#include <utility>
+
+namespace mlx::core::detail {
+
+#ifdef MLX_USE_ACCELERATE
+inline __CLPK_complex* lapack_cast(std::complex<float>* ptr) {
+  return reinterpret_cast<__CLPK_complex*>(ptr);
+}
+
+inline __CLPK_complex* lapack_cast(const std::complex<float>* ptr) {
+  return reinterpret_cast<__CLPK_complex*>(
+      const_cast<std::complex<float>*>(ptr));
+}
+
+inline __CLPK_doublecomplex* lapack_cast(std::complex<double>* ptr) {
+  return reinterpret_cast<__CLPK_doublecomplex*>(ptr);
+}
+
+inline __CLPK_doublecomplex* lapack_cast(
+    const std::complex<double>* ptr) {
+  return reinterpret_cast<__CLPK_doublecomplex*>(
+      const_cast<std::complex<double>*>(ptr));
+}
+#endif
+
+template <typename T>
+inline auto lapack_cast(T value) {
+  if constexpr (
+      std::is_pointer_v<T> &&
+      std::is_const_v<std::remove_pointer_t<T>>) {
+    return const_cast<std::remove_const_t<std::remove_pointer_t<T>>*>(value);
+  } else {
+    return value;
+  }
+}
+
+#ifdef MLX_USE_ACCELERATE
+template <typename T>
+inline auto lapack_forward(T&& value) -> decltype(auto) {
+  return lapack_cast(std::forward<T>(value));
+}
+
+template <typename Func, typename... Args>
+inline auto lapack_invoke(Func func, Args&&... args) -> decltype(auto) {
+  return func(lapack_forward(std::forward<Args>(args))...);
+}
+#else
+template <typename Func, typename... Args>
+inline auto lapack_invoke(Func func, Args&&... args) -> decltype(auto) {
+  return func(std::forward<Args>(args)...);
+}
+#endif
+
+} // namespace mlx::core::detail
+
 #if defined(LAPACK_GLOBAL) || defined(LAPACK_NAME)
 
 // This is to work around a change in the function signatures of lapack >= 3.9.1
@@ -32,14 +88,16 @@
 
 #endif
 
-#define INSTANTIATE_LAPACK_REAL(FUNC)                        \
-  template <typename T, typename... Args>                    \
-  void FUNC(Args... args) {                                  \
-    if constexpr (std::is_same_v<T, float>) {                \
-      MLX_LAPACK_FUNC(s##FUNC)(std::forward<Args>(args)...); \
-    } else if constexpr (std::is_same_v<T, double>) {        \
-      MLX_LAPACK_FUNC(d##FUNC)(std::forward<Args>(args)...); \
-    }                                                        \
+#define INSTANTIATE_LAPACK_REAL(FUNC)                              \
+  template <typename T, typename... Args>                          \
+  void FUNC(Args... args) {                                        \
+    if constexpr (std::is_same_v<T, float>) {                      \
+      ::mlx::core::detail::lapack_invoke(                         \
+          MLX_LAPACK_FUNC(s##FUNC), std::forward<Args>(args)...);  \
+    } else if constexpr (std::is_same_v<T, double>) {              \
+      ::mlx::core::detail::lapack_invoke(                         \
+          MLX_LAPACK_FUNC(d##FUNC), std::forward<Args>(args)...);  \
+    }                                                              \
   }
 
 INSTANTIATE_LAPACK_REAL(geqrf)
@@ -52,14 +110,16 @@ INSTANTIATE_LAPACK_REAL(getrf)
 INSTANTIATE_LAPACK_REAL(getri)
 INSTANTIATE_LAPACK_REAL(trtri)
 
-#define INSTANTIATE_LAPACK_COMPLEX(FUNC)                            \
-  template <typename T, typename... Args>                           \
-  void FUNC(Args... args) {                                         \
-    if constexpr (std::is_same_v<T, std::complex<float>>) {         \
-      MLX_LAPACK_FUNC(c##FUNC)(std::forward<Args>(args)...);        \
-    } else if constexpr (std::is_same_v<T, std::complex<double>>) { \
-      MLX_LAPACK_FUNC(z##FUNC)(std::forward<Args>(args)...);        \
-    }                                                               \
+#define INSTANTIATE_LAPACK_COMPLEX(FUNC)                                  \
+  template <typename T, typename... Args>                                 \
+  void FUNC(Args... args) {                                               \
+    if constexpr (std::is_same_v<T, std::complex<float>>) {               \
+      ::mlx::core::detail::lapack_invoke(                               \
+          MLX_LAPACK_FUNC(c##FUNC), std::forward<Args>(args)...);        \
+    } else if constexpr (std::is_same_v<T, std::complex<double>>) {      \
+      ::mlx::core::detail::lapack_invoke(                               \
+          MLX_LAPACK_FUNC(z##FUNC), std::forward<Args>(args)...);        \
+    }                                                                     \
   }
 
 INSTANTIATE_LAPACK_COMPLEX(heevd)

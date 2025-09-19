@@ -81,7 +81,7 @@ void svd_impl(
     // Vᵀ of shape N x N. (M x M in lapack).
     const int ldvt = M;
 
-    auto jobz = (u_ptr) ? "A" : "N";
+    char jobz = (u_ptr) ? 'A' : 'N';
 
     // Will contain the number of singular values after the call has returned.
     int ns = 0;
@@ -91,13 +91,13 @@ void svd_impl(
     // used here but required by lapack).
     auto iwork = array::Data{allocator::malloc(sizeof(int) * 8 * K)};
 
-    static const int lwork_query = -1;
+    int lwork_query = -1;
 
     int info;
 
     // Compute workspace size.
     gesdd<T>(
-        /* jobz = */ jobz,
+        /* jobz = */ &jobz,
         // M and N are swapped since lapack expects column-major.
         /* m = */ &N,
         /* n = */ &M,
@@ -119,13 +119,13 @@ void svd_impl(
       throw std::runtime_error(ss.str());
     }
 
-    const int lwork = workspace_dimension;
+    int lwork = workspace_dimension;
     auto scratch = array::Data{allocator::malloc(sizeof(T) * lwork)};
 
     // Loop over matrices.
     for (int i = 0; i < num_matrices; i++) {
       gesdd<T>(
-          /* jobz = */ jobz,
+          /* jobz = */ &jobz,
           // M and N are swapped since lapack expects column-major.
           /* m = */ &N,
           /* n = */ &M,

@@ -28,7 +28,7 @@ void general_inv(T* inv, int N) {
     throw std::runtime_error(ss.str());
   }
 
-  static const int lwork_query = -1;
+  int lwork_query = -1;
   T workspace_size = 0;
 
   // Compute workspace size.
@@ -48,7 +48,7 @@ void general_inv(T* inv, int N) {
     throw std::runtime_error(ss.str());
   }
 
-  const int lwork = workspace_size;
+  int lwork = workspace_size;
   auto scratch = array::Data{allocator::malloc(sizeof(T) * lwork)};
 
   // Compute inverse.
@@ -70,8 +70,8 @@ void general_inv(T* inv, int N) {
 
 template <typename T>
 void tri_inv(T* inv, int N, bool upper) {
-  const char uplo = upper ? 'L' : 'U';
-  const char diag = 'N';
+  char uplo = upper ? 'L' : 'U';
+  char diag = 'N';
   int info;
   trtri<T>(
       /* uplo = */ &uplo,

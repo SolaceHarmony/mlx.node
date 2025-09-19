@@ -105,7 +105,8 @@ Simd<T, 1> log1p(Simd<T, 1> in) {
       if (r == 0) { // handle underflow
         return Simd<T, 1>{T{x, theta}};
       }
-      return Simd<T, 1>{T{((typeof(x))(0.5)) * std::log1p(r), theta}};
+      return Simd<T, 1>{
+          T{static_cast<decltype(x)>(0.5) * std::log1p(r), theta}};
     } else {
       auto z0 = std::hypot(x + 1, y);
       return Simd<T, 1>{T{std::log(z0), theta}};

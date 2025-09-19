@@ -111,3 +111,30 @@ Miscellaneous modules to keep in view:
    `node/src/native` once the symbols are available.
 3. Start carving out the high-level Python modules (e.g. `mlx.nn`) following the
    checklist order, using the directory lists above to stage the work.
+4. Stand up the React 19 streaming story: prototype Server Actions that wrap
+   MLX workloads, expose an SSE/`ReadableStream` transport for incremental
+   tensor payloads, and ship a TypeScript helper that converts streamed chunks
+   into typed arrays for client components.
+
+## React 19 / Next.js Integration Blueprint
+
+- **Server orchestration**: Each MLX inference/training routine should be
+  exposed as a React Server Action that yields an async iterator of
+  intermediate payloads (tensor metadata, partial results, token batches).
+  The action hands those frames to an HTTP handler that emits
+  `text/event-stream` responses with retry/heartbeat wiring.
+- **Transport options**: Prefer native Server-Sent Events for low-overhead,
+  one-way delivery. Fall back to `ReadableStream` when the hosting platform
+  (e.g. Vercel `streamUI`) provides richer framing. Document both patterns in
+  the integration guide so adopters can pick per-deployment.
+- **Client hydration**: Author React 19 wrappers that open the SSE channel
+  during server render, hydrate into client components via `EventSource`, and
+  reconcile streamed tensors with hooks like `useActionState`, `useOptimistic`,
+  and `useTransition` for responsive UI updates.
+- **Payload schema**: Stream tensor headers first (shape, dtype, stride) so the
+  browser can preallocate `Float32Array`/`BigInt64Array` buffers. Follow with
+  base64-encoded or binary chunks keyed by tensor id. Include termination and
+  error frames for graceful cleanup.
+- **Docs & samples**: Capture the end-to-end flow in the upcoming React-focused
+  architecture note (see `docs/src/dev/node_streaming.rst`) and add a Next.js
+  example app once the core zero-copy constructors are in place.

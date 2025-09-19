@@ -6,13 +6,13 @@ Reference source map: see `PORTING_PLAN.md` for the list of upstream C++ and Pyt
 
 ## Core Infrastructure
 - [x] Build native addon (`mlx_array.node`) via N-API with MLX core sources (`array.cpp`, `dtype.cpp`, allocators).
-- [ ] Introduce shared build config covering additional MLX sources as we expand surface area (ops, evaluators, transforms).
+- [x] Introduce shared build config covering additional MLX sources as we expand surface area (ops, evaluators, transforms).
 
 ## DType Surface (`mlx.core.dtype`)
 - [x] Expose MLX dtype constants with key/size/category accessors.
 - [x] Link native `mlx::core::issubdtype` helpers to unblock `dtype.category` (fix crash).
 - [x] Surface dtype category enums and Node `issubdtype` parity helpers.
- - [x] Provide Python-parity helpers (e.g. key enumeration API mirroring `__dir__`, formatting introspection).
+- [x] Provide Python-parity helpers (e.g. key enumeration API mirroring `__dir__`, formatting introspection).
 - [ ] Add comprehensive dtype tests (edge categories, comparisons, promotions) and ensure stability under parallel runs.
 
 ## Array Constructors (`mlx.core.array`)
@@ -26,14 +26,19 @@ Reference source map: see `PORTING_PLAN.md` for the list of upstream C++ and Pyt
 - [ ] Add arithmetic and comparison ops leveraging MLX primitives (`add`, `mul`, `where`, etc.).
 - [ ] Verify gradient/autodiff compatibility once higher-level ops are in place.
 
+## React/Next Integration (high priority)
+- [ ] Produce React 19/Next.js friendly wrappers ensuring async server components can orchestrate MLX workloads.
+- [ ] Document hydration-safe patterns for tensor creation/usage in shared memory contexts.
+
 ## Memory & Performance
 - [ ] Wire unified allocator entry points so tensors can reference MLX-managed memory without JS copies.
 - [ ] Surface cache/limit controls (`mlx.core.set_memory_limit`, etc.) in Node API.
 - [ ] Benchmark baseline ops to ensure parity with Python within expected overhead bounds.
 
-## React/Next Integration
-- [ ] Produce React 19/Next.js friendly wrappers ensuring async server components can orchestrate MLX workloads.
-- [ ] Document hydration-safe patterns for tensor creation/usage in shared memory contexts.
+## I/O & Model Loading (after core tensor ops)
+- [ ] Restore GGUF + safetensors loaders (vendor gguflib + nlohmann/json) once native build plumbing is ready.
+- [x] Stage upstream `mlx.metallib` and kernel sources in `node/vendor` so Metal runtime can initialize under Node.
+- [ ] Automate metallib generation during `npm run build` once the Metal toolchain is available in CI/dev environments.
 
 ## Tooling & Tests
 - [x] Mocha + TypeScript test harness covering core entry points.

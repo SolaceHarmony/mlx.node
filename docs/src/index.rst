@@ -91,3 +91,4 @@ are the CPU and GPU.
    dev/metal_debugger
    dev/custom_metal_kernels
    dev/mlx_in_cpp
+   dev/node_streaming

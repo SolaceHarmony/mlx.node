@@ -93,7 +93,7 @@ struct EighWork<std::complex<float>> {
         nullptr,
         &N,
         nullptr,
-        &work,
+        ::mlx::core::detail::lapack_cast(&work),
         &lwork,
         &rwork,
         &lrwork,
@@ -109,14 +109,17 @@ struct EighWork<std::complex<float>> {
   }
 
   void run(T* vectors, R* values) {
+    auto* work_buffer = static_cast<T*>(buffers[0].buffer.raw_ptr());
+    auto* lapack_vectors = ::mlx::core::detail::lapack_cast(vectors);
+    auto* lapack_work = ::mlx::core::detail::lapack_cast(work_buffer);
     heevd<T>(
         &jobz,
         &uplo,
         &N,
-        vectors,
+        lapack_vectors,
         &N,
         values,
-        static_cast<T*>(buffers[0].buffer.raw_ptr()),
+        lapack_work,
         &lwork,
         static_cast<R*>(buffers[1].buffer.raw_ptr()),
         &lrwork,
