@@ -64,6 +64,9 @@ Operational Concerns
   client, especially on large tensor dumps.
 * Log stream lifecycle events (open, heartbeat, close, error) for observability
   and to detect degraded inference behaviour.
+* Keep the native addon context-aware: new wrappers should tuck their
+  `Napi::FunctionReference`s into the shared ``AddonData`` instance so each
+  Node environment gets its own constructors and cleanup hooks.
 
 Next Steps
 ----------
@@ -76,3 +79,31 @@ Next Steps
    servers, highlighting any platform-specific headers or buffering tweaks.
 4. Add an end-to-end example that performs token streaming from an MLX GGUF
    model once the zero-copy constructors are available.
+
+Library Support
+---------------
+
+The ``mlx-node`` package now exposes streaming helpers under ``streaming`` and
+React-facing utilities under ``react``:
+
+* ``streaming.eventStreamResponse`` converts an ``AsyncIterable`` of tensor
+  frames into an SSE ``Response`` suitable for route handlers or Server
+  Actions.
+* ``streaming.tensorToFrames`` and ``streaming.tensorsToFrameStream`` transform
+  real ``MLXArray`` instances into header/data/end frames, chunking payloads in
+  base64 so they can be streamed without pre-serialising everything in memory.
+* ``core.stream`` mirrors MLX's native stream API (``defaultStream``,
+  ``newStream``, ``withStream``) and ``SSEOptions.stream`` lets you run the
+  entire pipeline inside an explicit MLX stream or device context without
+  additional boilerplate.
+* ``react.createStreamHandler`` wraps a producer into a handler you can export
+  directly from a Next.js route file.
+* ``react.useTensorStream`` is a Client Component hook that subscribes to the
+  SSE endpoint, tracks the latest frame, and optionally keeps a history buffer
+  while invoking an ``onFrame`` callback for custom processing.
+
+The ``streaming`` helpers automatically detect ``MLXArray`` payloads yielded
+from your async generators, encode them with chunk sizes that you can override,
+and honour optional metadata/id factories defined via ``SSEOptions.tensor``.
+On the client, ``useTensorStream`` decodes binary chunks by default, handing
+you ``Uint8Array`` views ready for typed-array reshaping.

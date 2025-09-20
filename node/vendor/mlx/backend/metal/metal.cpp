@@ -54,9 +54,21 @@ device_info() {
   auto init_device_info = []()
       -> std::unordered_map<std::string, std::variant<std::string, size_t>> {
     auto pool = new_scoped_memory_pool();
-    auto raw_device = device(default_device()).mtl_device();
-    auto name = std::string(raw_device->name()->utf8String());
-    auto arch = std::string(raw_device->architecture()->name()->utf8String());
+    auto& dev = device(default_device());
+    auto raw_device = dev.mtl_device();
+    if (!raw_device) {
+      throw std::runtime_error("[metal::device_info] null Metal device");
+    }
+    auto name_str = raw_device->name();
+    if (!name_str) {
+      throw std::runtime_error("[metal::device_info] null device name");
+    }
+    auto name = std::string(name_str->utf8String());
+    auto arch_obj = raw_device->architecture();
+    if (!arch_obj) {
+      throw std::runtime_error("[metal::device_info] null architecture object");
+    }
+    auto arch = std::string(arch_obj->name()->utf8String());
 
     size_t memsize = 0;
     size_t length = sizeof(memsize);

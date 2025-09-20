@@ -1,0 +1,31 @@
+{
+  "name": "mlx-node",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native MLX bindings for Node.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "node-gyp rebuild && tsc",
+    "clean": "node-gyp clean && rm -rf build dist",
+    "prepare": "npm run build",
+    "test": "mocha --recursive dist/test"
+  },
+  "gypfile": true,
+  "dependencies": {
+    "fmt": "^2.0.0",
+    "nan": "^2.23.0",
+    "node-addon-api": "^7.0.0"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0-0",
+    "react-dom": "^19.0.0-0"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^22.5.5",
+    "@types/react": "^19.0.0",
+    "mocha": "^11.0.1",
+    "typescript": "^5.8.3"
+  }
+}

@@ -98,6 +98,10 @@ Miscellaneous modules to keep in view:
 - Native entrypoints delivered so far: array construction (`Array.from*`), dtype
   wrappers, scalar constructors (`zeros`, `ones`, `full`, and the `_like`
   variants).
+- The addon now relies on per-environment `AddonData` (backed by
+  `SetInstanceData` + `AddCleanupHook`) so constructors and singletons avoid
+  global state, matching the Native Abstractions for Node.js guidance for
+  context-aware addons.
 - TypeScript surface in place: `src/core/array.ts`, `src/core/dtype.ts`,
   `src/index.ts`, supporting tests under `test/core/`.
 - Progress tracking: `node/CHECKLIST.md` (high-level milestones) and this file
@@ -138,3 +142,14 @@ Miscellaneous modules to keep in view:
 - **Docs & samples**: Capture the end-to-end flow in the upcoming React-focused
   architecture note (see `docs/src/dev/node_streaming.rst`) and add a Next.js
   example app once the core zero-copy constructors are in place.
+- **Library plumbing**: Streaming primitives now live under `src/streaming`
+  (shared SSE helpers) and `src/react` (hooks + handler builders). They accept
+  raw `MLXArray` instances and expand them into chunked tensor frames, so
+  future work should extend these utilities rather than duplicating SSE glue in
+  consumer apps. The new `src/core/stream.ts` module mirrors MLX's stream API
+  (`defaultStream`, `newStream`, `withStream`), and `SSEOptions.stream` routes
+  streaming work through those contexts automatically.
+- **Core ops**: Baseline tensor ops (`reshape`, `transpose`, `moveaxis`,
+  `swapaxes`, `add`, `multiply`, `where`) are exposed through
+  `src/core/ops.ts`, with native bindings in `array.cc`. Extend this module as
+  additional MLX primitives come online.
