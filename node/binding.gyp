@@ -78,6 +78,35 @@
           "-framework", "QuartzCore"
         ]
       }
+    },
+    {
+      "target_name": "mlx_console",
+      "type": "executable",
+      "sources": [
+        "labs/cpp/gpu_sanity.cpp"
+      ],
+      "include_dirs": [
+        "vendor/metal-cpp",
+        "vendor",
+        "../",
+        "/System/Library/Frameworks/Accelerate.framework/Frameworks/vecLib.framework/Headers"
+      ],
+      "dependencies": [
+        "mlx_core"
+      ],
+      "libraries": [
+        "<(module_root_dir)/build/Release/mlx_core.a"
+      ],
+      "xcode_settings": {
+        "CLANG_CXX_LANGUAGE_STANDARD": "gnu++17",
+        "CLANG_CXX_LIBRARY": "libc++",
+        "OTHER_LDFLAGS": [
+          "-framework", "Metal",
+          "-framework", "Accelerate",
+          "-framework", "Foundation",
+          "-framework", "QuartzCore"
+        ]
+      }
     }
   ]
 }
