@@ -1178,6 +1178,34 @@ Napi::Value GPUSanity(const Napi::CallbackInfo& info) {
   }
 }
 
+Napi::Value CPUSanity(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  try {
+    // CPU stream demo: mirror the GPU example on CPU to prove the binding+streams.
+    auto result = [&]() -> Napi::Value {
+      auto s2 = mlx::core::new_stream(mlx::core::Device::cpu);
+      auto s3 = mlx::core::new_stream(mlx::core::Device::cpu);
+
+      auto a = mlx::core::arange(1.f, 10.f, 1.f, mlx::core::float32, s2);
+      auto b = mlx::core::arange(1.f, 10.f, 1.f, mlx::core::float32, s3);
+      auto x = mlx::core::add(a, a, s2);
+      auto y = mlx::core::add(b, b, s3);
+      auto z = mlx::core::multiply(x, y);
+      mlx::core::eval(z);
+
+      const size_t length = z.size();
+      auto buffer = Napi::ArrayBuffer::New(env, length * sizeof(float));
+      auto jsArray = Napi::Float32Array::New(env, length, buffer, 0);
+      std::memcpy(buffer.Data(), z.data<float>(), length * sizeof(float));
+      return jsArray;
+    }();
+    return result;
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+}
+
 } // namespace
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -1212,6 +1240,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("where", Napi::Function::New(env, Where, "where", &data));
   exports.Set("gpu_info", Napi::Function::New(env, GPUInfo, "gpu_info", &data));
   exports.Set("gpu_sanity", Napi::Function::New(env, GPUSanity, "gpu_sanity", &data));
+  exports.Set("cpu_sanity", Napi::Function::New(env, CPUSanity, "cpu_sanity", &data));
   mlx::node::InitDtype(env, exports, data);
   mlx::node::InitStreamBindings(env, exports, data);
   return exports;

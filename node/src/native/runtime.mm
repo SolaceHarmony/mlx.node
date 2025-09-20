@@ -4,7 +4,6 @@
 #include <TargetConditionals.h>
 #if TARGET_OS_OSX
 #include <Metal/Metal.h>
-extern "C" id MTLCreateSystemDefaultDevice(void);
 #endif
 #endif
 

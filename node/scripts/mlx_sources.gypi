@@ -45,6 +45,9 @@
       'vendor/mlx/backend/gpu/copy.cpp',
       'vendor/mlx/backend/gpu/primitives.cpp',
       'vendor/mlx/backend/gpu/slicing.cpp',
+      'vendor/mlx/device.cpp',
+      # Shunt CUDA: provide stub entrypoints, do not compile real CUDA backend
+      'vendor/mlx/backend/cuda/no_cuda.cpp',
       'vendor/mlx/backend/metal/allocator.cpp',
       'vendor/mlx/backend/metal/binary.cpp',
       'vendor/mlx/backend/metal/compiled.cpp',
