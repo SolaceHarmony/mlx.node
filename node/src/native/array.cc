@@ -1115,6 +1115,181 @@ T ParseScalarValue(Napi::Env env, const Napi::Value& value) {
   }
 }
 
+// Accumulates element-kind flags while flattening JS nested arrays
+struct TypeScan {
+  bool has_float = false;
+  bool has_bigint = false;
+  bool has_int = false;
+  bool has_bool = false;
+};
+
+static bool FlattenNestedJS(Napi::Env env,
+                            const Napi::Value& v,
+                            std::vector<double>& data,
+                            std::vector<int>& dims,
+                            size_t depth,
+                            TypeScan& scan) {
+  if (v.IsArray()) {
+    auto arr = v.As<Napi::Array>();
+    const size_t len = arr.Length();
+    if (dims.size() <= depth) dims.push_back((int)len);
+    else if (dims[depth] != (int)len) {
+      Napi::TypeError::New(env, "Ragged nested lists are not supported").ThrowAsJavaScriptException();
+      return false;
+    }
+    for (size_t i = 0; i < len; ++i) {
+      if (!FlattenNestedJS(env, arr[i], data, dims, depth + 1, scan)) return false;
+    }
+    return true;
+  }
+  if (v.IsBoolean()) {
+    scan.has_bool = true;
+    data.push_back(v.As<Napi::Boolean>().Value() ? 1.0 : 0.0);
+    return true;
+  }
+  if (v.IsBigInt()) {
+    scan.has_bigint = true;
+    bool lossless = false;
+    auto val = v.As<Napi::BigInt>().Int64Value(&lossless);
+    data.push_back(static_cast<double>(val));
+    return true;
+  }
+  if (v.IsNumber()) {
+    double d = v.As<Napi::Number>().DoubleValue();
+    double r = std::floor(d);
+    if (std::fabs(d - r) > 1e-12) scan.has_float = true; else scan.has_int = true;
+    data.push_back(d);
+    return true;
+  }
+  Napi::TypeError::New(env, "Only numeric JS arrays are supported in mx.core.array").ThrowAsJavaScriptException();
+  return false;
+}
+
+static mlx::core::Dtype ChooseDtypeFromScan(const TypeScan& s) {
+  if (s.has_float) return mlx::core::float32;
+  if (s.has_bigint) return mlx::core::int64;
+  if (s.has_int) return mlx::core::int32;
+  if (s.has_bool) return mlx::core::bool_;
+  return mlx::core::float32;
+}
+
+// Unified conversion helper (internal to binding, not exported)
+// - overrideShape: only used by array(typed, shape, ...)
+static std::optional<mlx::core::array> ToArrayValue(
+    Napi::Env env,
+    const Napi::Value& x,
+    std::optional<mlx::core::Dtype> requestedDtype,
+    const mlx::core::StreamOrDevice& streamArg,
+    std::optional<Napi::Array> overrideShape) {
+  auto& addon = mlx::node::GetAddonData(env);
+
+  // Case: existing mlx Array
+  if (x.IsObject()) {
+    auto obj = x.As<Napi::Object>();
+    auto ctor = addon.array_constructor.Value();
+    if (!ctor.IsEmpty() && obj.InstanceOf(ctor)) {
+      const auto* w = Napi::ObjectWrap<ArrayWrapper>::Unwrap(obj);
+      if (w == nullptr) {
+        Napi::TypeError::New(env, "Invalid mlx.core.Array").ThrowAsJavaScriptException();
+        return {};
+      }
+      auto a = w->tensor();
+      if (requestedDtype.has_value() && requestedDtype.value() != a.dtype()) {
+        a = mlx::core::astype(a, requestedDtype.value(), streamArg);
+      } else if (!std::holds_alternative<std::monostate>(streamArg)) {
+        a = mlx::core::copy(a, streamArg);
+      }
+      return a;
+    }
+  }
+
+  // Case: TypedArray
+  if (x.IsTypedArray()) {
+    auto typed = x.As<Napi::TypedArray>();
+    Napi::Array shapeArray;
+    if (overrideShape.has_value()) {
+      shapeArray = *overrideShape;
+    } else {
+      shapeArray = Napi::Array::New(env, 1);
+      shapeArray[(uint32_t)0u] = Napi::Number::New(env, (double)typed.ElementLength());
+    }
+    auto arrOpt = ArrayWrapper::BuildFromTyped(env, typed, shapeArray, requestedDtype);
+    if (!arrOpt.has_value()) return {};
+    auto a = std::move(arrOpt.value());
+    if (!std::holds_alternative<std::monostate>(streamArg)) {
+      a = mlx::core::copy(a, streamArg);
+    }
+    return a;
+  }
+
+  // Case: nested JS arrays
+  if (x.IsArray()) {
+    std::vector<double> flat; std::vector<int> dims; TypeScan scan;
+    if (!FlattenNestedJS(env, x, flat, dims, 0, scan)) return {};
+    mlx::core::Shape shape; for (int d : dims) shape.push_back(d);
+    auto dtype = requestedDtype.value_or(mlx::core::float32);
+    std::optional<mlx::core::array> out;
+    switch (dtype) {
+      case mlx::core::int32: {
+        std::vector<int32_t> host(flat.size());
+        for (size_t i=0;i<flat.size();++i) host[i] = static_cast<int32_t>(std::llround(flat[i]));
+        out = mlx::core::array(host.begin(), shape.empty()? mlx::core::Shape{(int)host.size()} : shape, dtype);
+        break;
+      }
+      case mlx::core::int64: {
+        std::vector<int64_t> host(flat.size());
+        for (size_t i=0;i<flat.size();++i) host[i] = static_cast<int64_t>(std::llround(flat[i]));
+        out = mlx::core::array(host.begin(), shape.empty()? mlx::core::Shape{(int)host.size()} : shape, dtype);
+        break;
+      }
+      case mlx::core::bool_: {
+        std::vector<bool> host(flat.size());
+        for (size_t i=0;i<flat.size();++i) host[i] = (flat[i] != 0.0);
+        out = mlx::core::array(host.begin(), shape.empty()? mlx::core::Shape{(int)host.size()} : shape, dtype);
+        break;
+      }
+      case mlx::core::float64: {
+        out = mlx::core::array(flat.begin(), shape.empty()? mlx::core::Shape{(int)flat.size()} : shape, dtype);
+        break;
+      }
+      default: { // float32 and others default to float32 path
+        std::vector<float> host(flat.size());
+        for (size_t i=0;i<flat.size();++i) host[i] = static_cast<float>(flat[i]);
+        auto dt = (dtype == mlx::core::float16 || dtype == mlx::core::bfloat16 || dtype == mlx::core::complex64) ? dtype : mlx::core::float32;
+        out = mlx::core::array(host.begin(), shape.empty()? mlx::core::Shape{(int)host.size()} : shape, dt);
+        if (dtype != dt) out = mlx::core::astype(*out, dtype);
+        break;
+      }
+    }
+    auto a = std::move(out.value());
+    if (!std::holds_alternative<std::monostate>(streamArg)) {
+      a = mlx::core::copy(a, streamArg);
+    }
+    return a;
+  }
+
+  // Case: scalar
+  if (x.IsBoolean() || x.IsBigInt() || x.IsNumber()) {
+    auto infer = [&](const Napi::Value& v) {
+      if (v.IsBoolean()) return mlx::core::bool_;
+      if (v.IsBigInt()) return mlx::core::int64;
+      double d = v.As<Napi::Number>().DoubleValue();
+      double r = std::floor(d);
+      return (std::fabs(d - r) < 1e-12 ? mlx::core::int32 : mlx::core::float32);
+    };
+    auto dtype = requestedDtype.value_or(infer(x));
+    double scalar = x.IsBoolean() ? (x.As<Napi::Boolean>().Value() ? 1.0 : 0.0)
+                                  : x.IsBigInt() ? (double)x.As<Napi::BigInt>().Int64Value(nullptr)
+                                                 : x.As<Napi::Number>().DoubleValue();
+    auto a = mlx::core::array(scalar, dtype);
+    if (!std::holds_alternative<std::monostate>(streamArg)) a = mlx::core::copy(a, streamArg);
+    return a;
+  }
+
+  Napi::TypeError::New(env, "Unsupported input").ThrowAsJavaScriptException();
+  return {};
+}
+
 // arange(stop[, step], dtype=None, *, stream)
 // arange(start, stop[, step], dtype=None, *, stream)
 // Default dtype rules (Python parity):
@@ -1356,15 +1531,12 @@ Napi::Value Full(const Napi::CallbackInfo& info) {
     }
   }
 
-  // Case: vals is TypedArray (1D) → wrap then broadcast
-  if (info[1].IsTypedArray()) {
-    auto typed = info[1].As<Napi::TypedArray>();
-    Napi::Array sh = Napi::Array::New(env, 1);
-    sh[(uint32_t)0u] = Napi::Number::New(env, (double)typed.ElementLength());
-    auto srcOpt = ArrayWrapper::MakeArrayFromTyped(env, typed, sh, maybeDtype);
+  // Case: vals is TypedArray or nested lists → use ToArrayValue then broadcast
+  if (info[1].IsTypedArray() || info[1].IsArray()) {
+    auto srcOpt = ToArrayValue(env, info[1], maybeDtype, streamArg, std::nullopt);
     if (!srcOpt.has_value()) return env.Null();
     return WrapArray(env, std::make_shared<mlx::core::array>(
-                              mlx::core::full(shape, srcOpt.value(), streamArg)));
+        mlx::core::full(shape, srcOpt.value(), streamArg)));
   }
 
   // Case: scalar vals → infer dtype if not provided
