@@ -449,8 +449,8 @@ class ArrayWrapper : public Napi::ObjectWrap<ArrayWrapper> {
     }
 
     std::optional<mlx::core::Dtype> dtype;
-    if (info.Length() >= 3 && !info[2].IsUndefined() && info[2].IsString()) {
-      dtype = ParseDtype(env, info[2].As<Napi::String>().Utf8Value());
+    if (info.Length() >= 3 && IsDtypeArg(env, info[2])) {
+      dtype = MaybeParseDtype(env, info[2], mlx::core::float32);
       if (env.IsExceptionPending()) {
         return env.Null();
       }
@@ -619,8 +619,17 @@ std::optional<mlx::core::array> ArrayWrapper::BuildFromTyped(
   return MakeArrayFromTyped(env, typed, shapeArray, requestedDtype);
 }
 mlx::core::Shape ParseShapeArgument(Napi::Env env, const Napi::Value& value) {
+  // Accept a single integer => 1D shape [n], or an array of integers => shape
+  if (value.IsNumber()) {
+    auto n = value.As<Napi::Number>().Int64Value();
+    if (n < 0) {
+      Napi::RangeError::New(env, "Shape dimension must be non-negative").ThrowAsJavaScriptException();
+      return {};
+    }
+    return mlx::core::Shape{static_cast<mlx::core::ShapeElem>(n)};
+  }
   if (!value.IsArray()) {
-    Napi::TypeError::New(env, "Shape must be an array of integers")
+    Napi::TypeError::New(env, "Shape must be an integer or an array of integers")
         .ThrowAsJavaScriptException();
     return {};
   }
@@ -827,50 +836,23 @@ mlx::core::Dtype MaybeParseDtype(
   if (value.IsUndefined() || value.IsNull()) {
     return fallback;
   }
-  // Accept a real mlx.core.Dtype object first by reading its key()
+  // Strict: dtype must be a mlx.core.Dtype object (instance of Dtype)
   auto& data = mlx::node::GetAddonData(env);
-  if (value.IsObject()) {
-    auto obj = value.As<Napi::Object>();
-    auto ctor = data.dtype_constructor.Value();
-    if (!ctor.IsEmpty() && obj.InstanceOf(ctor)) {
-      auto keyFn = obj.Get("key");
-      if (keyFn.IsFunction()) {
-        auto keyVal = keyFn.As<Napi::Function>().Call(obj, {});
-        if (keyVal.IsString()) {
-          return ParseDtypeKey(env, keyVal.As<Napi::String>().Utf8Value());
-        }
-      }
-      // Fallback: toString contains 'mlx.core.<key>'
-      auto toStr = obj.Get("toString");
-      if (toStr.IsFunction()) {
-        auto s = toStr.As<Napi::Function>().Call(obj, {});
-        if (s.IsString()) {
-          std::string full = s.As<Napi::String>().Utf8Value();
-          auto pos = full.rfind('.');
-          if (pos != std::string::npos && pos + 1 < full.size()) {
-            return ParseDtypeKey(env, full.substr(pos + 1));
-          }
-        }
-      }
-    }
+  auto out = mlx::core::float32;
+  if (mlx::node::TryUnwrapDtype(value, data, out)) {
+    return out;
   }
-  // Temporary convenience: allow string key
-  if (value.IsString()) {
-    return ParseDtypeKey(env, value.As<Napi::String>().Utf8Value());
-  }
-  Napi::TypeError::New(env, "dtype must be a mlx.core.Dtype")
+  Napi::TypeError::New(env, "dtype must be a mlx.core.Dtype object (e.g., mlx.float32)")
       .ThrowAsJavaScriptException();
   return fallback;
 }
 
 bool IsDtypeArg(Napi::Env env, const Napi::Value& value) {
   if (value.IsUndefined() || value.IsNull()) return false;
-  if (value.IsString()) return true; // temporary convenience
   if (!value.IsObject()) return false;
   auto& data = mlx::node::GetAddonData(env);
-  auto obj = value.As<Napi::Object>();
-  auto ctor = data.dtype_constructor.Value();
-  return !ctor.IsEmpty() && obj.InstanceOf(ctor);
+  auto tmp = mlx::core::float32;
+  return mlx::node::TryUnwrapDtype(value, data, tmp);
 }
 
 template <typename T>
@@ -1219,6 +1201,26 @@ Napi::Value Multiply(const Napi::CallbackInfo& info) {
   return WrapArray(env, tensor);
 }
 
+Napi::Value Matmul(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 2) {
+    Napi::TypeError::New(env, "matmul expects two arrays")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto* a = UnwrapArray(env, info[0]);
+  auto* b = UnwrapArray(env, info[1]);
+  if (env.IsExceptionPending() || a == nullptr || b == nullptr) {
+    return env.Null();
+  }
+  auto streamArg = GetStreamArgument(info, 2);
+  if (env.IsExceptionPending()) {
+    return env.Null();
+  }
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::matmul(a->tensor(), b->tensor(), streamArg));
+  return WrapArray(env, tensor);
+}
 Napi::Value Where(const Napi::CallbackInfo& info) {
   auto env = info.Env();
   if (info.Length() < 3) {
@@ -1339,6 +1341,11 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   // Hello lives under core for quick diagnostics
   core.Set("hello", Napi::Function::New(env, Hello));
 
+  // Dtype and stream bindings first (so dtype constructors exist before ops parse dtype)
+  mlx::node::InitDtype(env, core, data);
+  mlx::node::InitDtype(env, mlx, data);
+  mlx::node::InitStreamBindings(env, core, data);
+
   // Classes and ops under core
   ArrayWrapper::Init(env, core);
   core.Set("array", Napi::Function::New(env, ArrayFactory, "array", &data));
@@ -1353,15 +1360,13 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   core.Set("swapaxes", Napi::Function::New(env, SwapAxes, "swapaxes", &data));
   core.Set("add", Napi::Function::New(env, Add, "add", &data));
   core.Set("multiply", Napi::Function::New(env, Multiply, "multiply", &data));
+  core.Set("matmul", Napi::Function::New(env, Matmul, "matmul", &data));
   core.Set("where", Napi::Function::New(env, Where, "where", &data));
   core.Set("gpu_info", Napi::Function::New(env, GPUInfo, "gpu_info", &data));
   core.Set("gpu_sanity", Napi::Function::New(env, GPUSanity, "gpu_sanity", &data));
   core.Set("cpu_sanity", Napi::Function::New(env, CPUSanity, "cpu_sanity", &data));
 
-  // Dtype and stream bindings into both mlx.core and mlx (top-level) for parity
-  mlx::node::InitDtype(env, core, data);
-  mlx::node::InitDtype(env, mlx, data);
-  mlx::node::InitStreamBindings(env, core, data);
+  // (already initialized dtype/streams above)
 
   mlx.Set("core", core);
 

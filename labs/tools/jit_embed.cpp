@@ -36,37 +36,42 @@ int main(int argc, char** argv) {
   fs::path kernels = root / "node" / "vendor" / "mlx" / "backend" / "metal" / "kernels";
   fs::path out = fs::path(argv[2]);
 
-  struct Entry { const char* func; const char* rel; };
+  struct Entry { const char* func; std::vector<const char*> rels; };
   std::vector<Entry> entries = {
-      {"utils", "utils.h"},
-      {"unary_ops", "unary_ops.h"},
-      {"binary_ops", "binary_ops.h"},
-      {"ternary_ops", "ternary_ops.h"},
-      {"arange", "arange.metal"},
-      {"unary", "unary.metal"},
-      {"binary", "binary.metal"},
-      {"binary_two", "binary_two.metal"},
-      {"copy", "copy.metal"},
-      {"fft", "fft.metal"},
-      {"logsumexp", "logsumexp.metal"},
-      {"softmax", "softmax.metal"},
-      {"scan", "scan.metal"},
-      {"sort", "sort.metal"},
-      {"reduce", "reduce.metal"},
-      {"quantized_utils", "quantized_utils.h"},
-      {"quantized", "quantized.metal"},
-      {"fp4_quantized", "fp4_quantized.metal"},
-      {"gather_axis", "indexing/gather_axis.h"},
-      {"gather_front", "indexing/gather_front.h"},
-      {"gemv_masked", "gemv_masked.metal"},
-      {"conv", "conv.metal"},
-      {"steel_conv", "steel/conv/kernels/steel_conv.metal"},
-      {"steel_conv_general", "steel/conv/kernels/steel_conv_general.metal"},
-      {"steel_gemm_fused", "steel/gemm/kernels/steel_gemm_fused.metal"},
-      {"steel_gemm_masked", "steel/gemm/kernels/steel_gemm_masked.metal"},
-      {"steel_gemm_splitk", "steel/gemm/kernels/steel_gemm_splitk.metal"},
-      {"steel_gemm_gather", "steel/gemm/kernels/steel_gemm_gather.metal"},
-      {"steel_gemm_segmented", "steel/gemm/kernels/steel_gemm_segmented.metal"},
+      {"utils", {"utils.h"}},
+      {"unary_ops", {"unary_ops.h"}},
+      {"binary_ops", {"binary_ops.h"}},
+      {"ternary_ops", {"ternary_ops.h"}},
+      {"arange", {"arange.metal"}},
+      {"unary", {"unary.metal"}},
+      {"binary", {"binary.metal"}},
+      {"binary_two", {"binary_two.metal"}},
+      {"copy", {"copy.metal"}},
+      {"fft", {"fft.metal"}},
+      {"logsumexp", {"logsumexp.metal"}},
+      {"softmax", {"softmax.metal"}},
+      {"scan", {"scan.metal"}},
+      {"sort", {"sort.metal"}},
+      {"reduce", {"reduce.metal"}},
+      {"quantized_utils", {"quantized_utils.h"}},
+      {"quantized", {"quantized.metal"}},
+      {"fp4_quantized", {"fp4_quantized.metal"}},
+      {"gather_axis", {"indexing/gather_axis.h"}},
+      {"gather_front", {"indexing/gather_front.h"}},
+      {"gemv_masked", {"gemv_masked.metal"}},
+      {"conv", {"conv.metal"}},
+      {"steel_conv", {"steel/conv/kernels/steel_conv.metal"}},
+      {"steel_conv_general", {"steel/conv/kernels/steel_conv_general.metal"}},
+      {"steel_gemm_fused", {"steel/gemm/kernels/steel_gemm_fused.metal"}},
+      {"gemm", {"steel/gemm/kernels/steel_gemm_fused.metal"}},
+      {"steel_gemm_masked", {"steel/gemm/kernels/steel_gemm_masked.metal"}},
+      {"steel_gemm_splitk", {"steel/gemm/kernels/steel_gemm_splitk.metal"}},
+      {"steel_gemm_gather", {"steel/gemm/kernels/steel_gemm_gather.metal"}},
+      {"steel_gemm_segmented", {"steel/gemm/kernels/steel_gemm_segmented.metal"}},
+      // Providers used by reductions
+      {"reduce_utils", {"atomic.h", "reduction/ops.h"}},
+      // Some codepaths use scatter_axis during indexing
+      {"scatter_axis", {"indexing/scatter_axis.h"}},
   };
 
   fs::create_directories(out.parent_path());
@@ -79,16 +84,14 @@ int main(int argc, char** argv) {
   os << "#include \"mlx/backend/metal/jit/includes.h\"\n";
   os << "namespace mlx::core::metal {\n\n";
   for (auto& e : entries) {
-    auto path = kernels / e.rel;
-    auto text = read_file(path);
-    if (text.empty()) {
-      // Leave empty body; function returns empty string, JIT may not use it for basic ops
-      emit_function(os, e.func, std::string());
-    } else {
-      emit_function(os, e.func, text);
+    std::string text;
+    for (const char* rel : e.rels) {
+      auto path = kernels / rel;
+      text += read_file(path);
+      text += "\n";
     }
+    emit_function(os, e.func, text);
   }
   os << "} // namespace mlx::core::metal\n";
   return 0;
 }
-
