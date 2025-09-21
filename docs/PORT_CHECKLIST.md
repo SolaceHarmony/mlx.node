@@ -10,6 +10,7 @@ Core surface (mlx.core)
   - [x] Dtype.key/name/size/category; dtype objects only (no strings)
 - [x] Streams: `default_stream(device)`, `new_stream(device)`, `synchronize(stream)`
 - [x] Array class: `shape()`, `dtype()`, `eval()`, `toTypedArray()`
+  - `dtype()` returns a Dtype object (e.g., `mlx.float32`) — Python parity
 - [~] Factories/ops (parity stage 1)
   - [x] zeros(shape, dtype=float32, *, stream)
   - [x] ones(shape, dtype=float32, *, stream)
@@ -19,8 +20,12 @@ Core surface (mlx.core)
   - [x] arange(start, stop[, step], dtype=None, *, stream) — dtype rules per Python
   - [x] arange(stop[, step], dtype=None, *, stream)
   - [ ] linspace(start, stop, num=50, dtype=float32, *, stream)
-  - [~] array(x, dtype=None, *, stream) — nested arrays, scalars, TypedArray/ArrayBuffer; dtype inference + promotion
-  - [~] asarray(x, dtype=None, *, stream) — (copy today) CPU no‑copy where safe [ ]
+- [~] array(x, dtype=None, *, stream) — unified conversion
+  - DONE: scalars, TypedArray/ArrayBuffer, existing MLX Array; nested lists default to float32
+  - TODO: mixed-type nested lists use promote_types (exact Python promotion)
+- [~] asarray(x, dtype=None, *, stream)
+  - DONE: same unified conversion; identity/astype/copy for MLX Array
+  - TODO: CPU no‑copy when dtype/layout safe (blocked on allocator ownership)
   - [x] reshape(a, shape, *, stream)
   - [x] transpose(a[, axes], *, stream)
   - [x] moveaxis(a, source, destination, *, stream)
@@ -59,7 +64,7 @@ Device & memory
 TypedArray interop
 ------------------
 - [x] toTypedArray() returns exact JS typed array by dtype
-- [ ] array/asarray no‑copy paths for CPU TypedArray when dtype matches (blocked; copy used)
+- [ ] array/asarray CPU no‑copy when dtype/layout match (blocked; copy used for correctness)
 
 Dtype inference & promotion
 ---------------------------
@@ -74,10 +79,11 @@ Error handling & lifecycle
 Docs & examples
 ---------------
 - [x] ARCHITECTURE.md, PORTING_NOTES.md (with how‑to), BUILDING.md
-- [ ] Examples parity with Python tutorials
+- [ ] Examples/tests: dtype-precision; array/asarray promotion; stream/device cases
 
 Notes
 -----
 - Policy: transliterate Python MLX exactly. No semantics invention; only Node‑idiom
   adaptations (TypedArray, AddonData, cleanup hooks).
+- Public surface is Python-only (diagnostics in labs/, not exported).
 - GPU‑first: no CPU‑only fallbacks. All ops accept `stream` keyword last.
