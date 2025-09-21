@@ -1,5 +1,27 @@
+# Build and dependencies
 node/build/
 node/generated/
-node/node/
+node/node_modules/
+node/dist/
+
+# Common compiled artifacts
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.pdb
+*.exe
+*.out
+*.node
+
+# Logs and OS cruft
 *.log
 *.DS_Store
+.DS_Store
+
+# Misc caches
+.cache/
+coverage/
