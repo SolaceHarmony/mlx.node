@@ -15,12 +15,12 @@ Core surface (mlx.core)
   - [x] ones(shape, dtype=float32, *, stream)
   - [x] zeros_like(a, *, stream)
   - [x] ones_like(a, *, stream)
-  - [~] full(shape, vals, dtype=None, *, stream) — scalar vals supported; array vals (broadcast + dtype inference) [ ]
-  - [ ] arange(start, stop[, step], dtype=None, *, stream) — dtype rules per Python
-  - [ ] arange(stop[, step], dtype=None, *, stream)
+  - [x] full(shape, vals, dtype=None, *, stream) — scalar + array/TypedArray vals (broadcast); scalar dtype inference
+  - [x] arange(start, stop[, step], dtype=None, *, stream) — dtype rules per Python
+  - [x] arange(stop[, step], dtype=None, *, stream)
   - [ ] linspace(start, stop, num=50, dtype=float32, *, stream)
-  - [ ] array(x, dtype=None, *, stream) — nested arrays, scalars, TypedArray/ArrayBuffer; dtype inference + promotion
-  - [ ] asarray(x, dtype=None, *, stream) — no‑copy on CPU where safe
+  - [~] array(x, dtype=None, *, stream) — nested arrays, scalars, TypedArray/ArrayBuffer; dtype inference + promotion
+  - [~] asarray(x, dtype=None, *, stream) — (copy today) CPU no‑copy where safe [ ]
   - [x] reshape(a, shape, *, stream)
   - [x] transpose(a[, axes], *, stream)
   - [x] moveaxis(a, source, destination, *, stream)
@@ -59,12 +59,11 @@ Device & memory
 TypedArray interop
 ------------------
 - [x] toTypedArray() returns exact JS typed array by dtype
-- [ ] array/asarray no‑copy paths for CPU TypedArray when dtype matches
+- [ ] array/asarray no‑copy paths for CPU TypedArray when dtype matches (blocked; copy used)
 
 Dtype inference & promotion
 ---------------------------
-- [ ] scalar_to_dtype, promote_types: used exactly as in python/src/ops.cpp for
-      full/arange/array/asarray
+- [~] scalar_to_dtype, promote_types: implemented for full/arange; unify array/asarray (nested lists) next
 
 Error handling & lifecycle
 --------------------------
@@ -82,4 +81,3 @@ Notes
 - Policy: transliterate Python MLX exactly. No semantics invention; only Node‑idiom
   adaptations (TypedArray, AddonData, cleanup hooks).
 - GPU‑first: no CPU‑only fallbacks. All ops accept `stream` keyword last.
-

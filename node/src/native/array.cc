@@ -487,7 +487,15 @@ class ArrayWrapper : public Napi::ObjectWrap<ArrayWrapper> {
 
   Napi::Value Dtype(const Napi::CallbackInfo& info) {
     auto env = info.Env();
-    return Napi::String::New(env, DtypeToString(tensor().dtype()));
+    // Return a Dtype object (e.g., mlx.float32) to match Python parity
+    auto& addon = mlx::node::GetAddonData(env);
+    auto dt = tensor().dtype();
+    // Construct via the recorded dtype constructor, mirroring DtypeWrapper::Create
+    auto ext = Napi::External<mlx::core::Dtype>::New(
+        env,
+        new mlx::core::Dtype(dt),
+        [](Napi::Env /*env*/, mlx::core::Dtype* ptr) { delete ptr; });
+    return addon.dtype_constructor.New({ext});
   }
 
   Napi::Value Eval(const Napi::CallbackInfo& info) {
@@ -1107,6 +1115,116 @@ T ParseScalarValue(Napi::Env env, const Napi::Value& value) {
   }
 }
 
+// arange(stop[, step], dtype=None, *, stream)
+// arange(start, stop[, step], dtype=None, *, stream)
+// Default dtype rules (Python parity):
+//  - start/stop form: float32 if any arg is float, else int32
+//  - stop form: dtype(step ? promote(dtype(stop), dtype(step)) : dtype(stop))
+//  - If any BigInt present and no float, use int64
+Napi::Value Arange(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+  if (addon == nullptr) {
+    Napi::Error::New(env, "AddonData missing for arange").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "arange expects at least one argument").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  auto is_num_like = [](const Napi::Value& v) { return v.IsNumber() || v.IsBigInt(); };
+  auto is_float_num = [](const Napi::Value& v) {
+    if (!v.IsNumber()) return false;
+    double d = v.As<Napi::Number>().DoubleValue();
+    double r = std::floor(d);
+    return std::fabs(d - r) > 1e-12; // non-integer
+  };
+
+  bool two_positional = (info.Length() >= 2 && is_num_like(info[0]) && is_num_like(info[1]));
+
+  std::optional<Napi::Value> start_v;
+  Napi::Value stop_v = info[0];
+  std::optional<Napi::Value> step_v;
+  size_t idx = 1;
+  if (two_positional) {
+    start_v = info[0];
+    stop_v = info[1];
+    idx = 2;
+  }
+
+  if (info.Length() > idx && is_num_like(info[idx])) {
+    step_v = info[idx];
+    idx += 1;
+  }
+
+  // Optional dtype and stream
+  std::optional<mlx::core::Dtype> maybeDtype;
+  if (info.Length() > idx && IsDtypeArg(env, info[idx], *addon)) {
+    maybeDtype = MaybeParseDtype(env, info[idx], mlx::core::float32, *addon);
+    if (env.IsExceptionPending()) return env.Null();
+    idx += 1;
+  }
+  auto streamArg = GetStreamArgument(info, idx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  // Defaults
+  bool any_float = (is_float_num(stop_v)) || (start_v && is_float_num(*start_v)) || (step_v && is_float_num(*step_v));
+  bool any_bigint = stop_v.IsBigInt() || (start_v && (*start_v).IsBigInt()) || (step_v && (*step_v).IsBigInt());
+
+  auto default_dtype = [&]() -> mlx::core::Dtype {
+    if (two_positional) {
+      if (any_float) return mlx::core::float32;
+      if (any_bigint) return mlx::core::int64;
+      return mlx::core::int32;
+    } else {
+      // stop[, step]
+      if (any_float) return mlx::core::float32;
+      if (any_bigint) return mlx::core::int64;
+      return mlx::core::int32;
+    }
+  }();
+
+  auto dtype = maybeDtype.value_or(default_dtype);
+
+  // Convert to concrete scalars
+  auto to_i64 = [&](const Napi::Value& v) -> int64_t {
+    if (v.IsBigInt()) {
+      bool lossless = false;
+      return v.As<Napi::BigInt>().Int64Value(&lossless);
+    }
+    return static_cast<int64_t>(v.As<Napi::Number>().DoubleValue());
+  };
+  auto to_f64 = [&](const Napi::Value& v) -> double {
+    if (v.IsBigInt()) {
+      // represent BigInt as double (may lose precision, but dtype chosen is int64 unless overridden)
+      return static_cast<double>(to_i64(v));
+    }
+    return v.As<Napi::Number>().DoubleValue();
+  };
+
+  std::shared_ptr<mlx::core::array> out;
+  try {
+    if (mlx::core::issubdtype(dtype, mlx::core::floating)) {
+      double start = two_positional ? to_f64(*start_v) : 0.0;
+      double stop = to_f64(stop_v);
+      double step = step_v ? to_f64(*step_v) : 1.0;
+      out = std::make_shared<mlx::core::array>(
+          mlx::core::arange(start, stop, step, dtype, streamArg));
+    } else {
+      int64_t start = two_positional ? to_i64(*start_v) : static_cast<int64_t>(0);
+      int64_t stop = to_i64(stop_v);
+      int64_t step = step_v ? to_i64(*step_v) : static_cast<int64_t>(1);
+      out = std::make_shared<mlx::core::array>(
+          mlx::core::arange(start, stop, step, dtype, streamArg));
+    }
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  return WrapArray(env, out);
+}
+
 mlx::core::array MakeFilledArray(
     const mlx::core::Shape& shape,
     double fill,
@@ -1639,8 +1757,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   Napi::Object mlx = Napi::Object::New(env);
   Napi::Object core = Napi::Object::New(env);
 
-  // Hello lives under core for quick diagnostics
-  core.Set("hello", Napi::Function::New(env, Hello));
+  // Keep public surface Python-parity; diagnostics live in labs (not exported here)
 
   // Dtype and stream bindings first (so dtype constructors exist before ops parse dtype)
   mlx::node::InitDtype(env, core, data);
@@ -1660,13 +1777,11 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   core.Set("transpose", Napi::Function::New(env, Transpose, "transpose", &data));
   core.Set("moveaxis", Napi::Function::New(env, MoveAxis, "moveaxis", &data));
   core.Set("swapaxes", Napi::Function::New(env, SwapAxes, "swapaxes", &data));
+  core.Set("arange", Napi::Function::New(env, Arange, "arange", &data));
   core.Set("add", Napi::Function::New(env, Add, "add", &data));
   core.Set("multiply", Napi::Function::New(env, Multiply, "multiply", &data));
   core.Set("matmul", Napi::Function::New(env, Matmul, "matmul", &data));
   core.Set("where", Napi::Function::New(env, Where, "where", &data));
-  core.Set("gpu_info", Napi::Function::New(env, GPUInfo, "gpu_info", &data));
-  core.Set("gpu_sanity", Napi::Function::New(env, GPUSanity, "gpu_sanity", &data));
-  core.Set("cpu_sanity", Napi::Function::New(env, CPUSanity, "cpu_sanity", &data));
 
   // (already initialized dtype/streams above)
 
