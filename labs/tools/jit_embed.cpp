@@ -1,6 +1,6 @@
 // Generate MLX Metal JIT preamble sources as a single C++ file.
 // Usage: jit_embed <repo_root> <out_cpp>
-// Reads vendor kernels from: <repo_root>/node/vendor/mlx/backend/metal/kernels
+// Reads vendor kernels from: <repo_root>/vendor/mlx/backend/metal/kernels
 
 #include <filesystem>
 #include <fstream>
@@ -33,7 +33,12 @@ int main(int argc, char** argv) {
     return 2;
   }
   fs::path root = fs::path(argv[1]);
-  fs::path kernels = root / "node" / "vendor" / "mlx" / "backend" / "metal" / "kernels";
+  // Prefer <root>/vendor/... but support being called with <root>=node/
+  fs::path kernels = root / "vendor" / "mlx" / "backend" / "metal" / "kernels";
+  if (!fs::exists(kernels)) {
+    fs::path alt = root / ".." / "vendor" / "mlx" / "backend" / "metal" / "kernels";
+    if (fs::exists(alt)) kernels = alt;
+  }
   fs::path out = fs::path(argv[2]);
 
   struct Entry { const char* func; std::vector<const char*> rels; };

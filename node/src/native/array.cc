@@ -30,11 +30,12 @@ namespace {
 Napi::Object WrapArray(Napi::Env env, std::shared_ptr<mlx::core::array> tensor);
 
 // Forward declarations for helpers used by factories
-bool IsDtypeArg(Napi::Env env, const Napi::Value& value);
+bool IsDtypeArg(Napi::Env env, const Napi::Value& value, mlx::node::AddonData& data);
 mlx::core::Dtype MaybeParseDtype(
     Napi::Env env,
     const Napi::Value& value,
-    mlx::core::Dtype fallback);
+    mlx::core::Dtype fallback,
+    mlx::node::AddonData& data);
 
 const std::unordered_map<std::string, mlx::core::Dtype>& DtypeLookup() {
   static const std::unordered_map<std::string, mlx::core::Dtype> mapping = {
@@ -449,8 +450,11 @@ class ArrayWrapper : public Napi::ObjectWrap<ArrayWrapper> {
     }
 
     std::optional<mlx::core::Dtype> dtype;
-    if (info.Length() >= 3 && IsDtypeArg(env, info[2])) {
-      dtype = MaybeParseDtype(env, info[2], mlx::core::float32);
+    if (info.Length() >= 3) {
+      auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+      if (addon && IsDtypeArg(env, info[2], *addon)) {
+        dtype = MaybeParseDtype(env, info[2], mlx::core::float32, *addon);
+      }
       if (env.IsExceptionPending()) {
         return env.Null();
       }
@@ -793,10 +797,13 @@ Napi::Value ArrayFactory(const Napi::CallbackInfo& info) {
   auto shapeArray = info[1].As<Napi::Array>();
   std::optional<mlx::core::Dtype> maybeDtype;
   size_t streamIndex = 2;
-  if (info.Length() >= 3 && IsDtypeArg(env, info[2])) {
-    maybeDtype = MaybeParseDtype(env, info[2], mlx::core::float32);
-    if (env.IsExceptionPending()) return env.Null();
-    streamIndex = 3;
+  if (info.Length() >= 3) {
+    auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+    if (addon && IsDtypeArg(env, info[2], *addon)) {
+      maybeDtype = MaybeParseDtype(env, info[2], mlx::core::float32, *addon);
+      if (env.IsExceptionPending()) return env.Null();
+      streamIndex = 3;
+    }
   }
   auto streamArg = GetStreamArgument(info, streamIndex);
   if (env.IsExceptionPending()) return env.Null();
@@ -832,27 +839,30 @@ const ArrayWrapper* UnwrapArray(Napi::Env env, const Napi::Value& value) {
 mlx::core::Dtype MaybeParseDtype(
     Napi::Env env,
     const Napi::Value& value,
-    mlx::core::Dtype fallback) {
+    mlx::core::Dtype fallback,
+    mlx::node::AddonData& addon_data) {
   if (value.IsUndefined() || value.IsNull()) {
     return fallback;
   }
-  // Strict: dtype must be a mlx.core.Dtype object (instance of Dtype)
-  auto& data = mlx::node::GetAddonData(env);
-  auto out = mlx::core::float32;
-  if (mlx::node::TryUnwrapDtype(value, data, out)) {
-    return out;
+  // Use Dtype.key property (exported via InstanceAccessor) to avoid unwrap issues
+  if (value.IsObject()) {
+    auto obj = value.As<Napi::Object>();
+    auto key = obj.Get("key");
+    if (key.IsString()) {
+      return ParseDtypeKey(env, key.As<Napi::String>().Utf8Value());
+    }
   }
   Napi::TypeError::New(env, "dtype must be a mlx.core.Dtype object (e.g., mlx.float32)")
       .ThrowAsJavaScriptException();
   return fallback;
 }
 
-bool IsDtypeArg(Napi::Env env, const Napi::Value& value) {
+bool IsDtypeArg(Napi::Env env, const Napi::Value& value, mlx::node::AddonData&) {
   if (value.IsUndefined() || value.IsNull()) return false;
   if (!value.IsObject()) return false;
-  auto& data = mlx::node::GetAddonData(env);
-  auto tmp = mlx::core::float32;
-  return mlx::node::TryUnwrapDtype(value, data, tmp);
+  auto obj = value.As<Napi::Object>();
+  auto key = obj.Get("key");
+  return key.IsString();
 }
 
 template <typename T>
@@ -878,6 +888,11 @@ mlx::core::array MakeFilledArray(
 
 Napi::Value Zeros(const Napi::CallbackInfo& info) {
   auto env = info.Env();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+  if (addon == nullptr) {
+    Napi::Error::New(env, "AddonData missing for zeros").ThrowAsJavaScriptException();
+    return env.Null();
+  }
   try {
     mlx::node::Runtime::Instance().EnsureMetalInit();
   } catch (const std::exception& e) {
@@ -897,8 +912,8 @@ Napi::Value Zeros(const Napi::CallbackInfo& info) {
   // Signature: zeros(shape, dtype?, streamOrDevice?)
   // If arg1 is a dtype (preferred) or a string key -> dtype; else stream/device.
   size_t streamIndex = 1;
-  if (info.Length() >= 2 && IsDtypeArg(env, info[1])) {
-    dtype = MaybeParseDtype(env, info[1], dtype);
+  if (info.Length() >= 2 && IsDtypeArg(env, info[1], *addon)) {
+    dtype = MaybeParseDtype(env, info[1], dtype, *addon);
     if (env.IsExceptionPending()) {
       return env.Null();
     }
@@ -915,6 +930,11 @@ Napi::Value Zeros(const Napi::CallbackInfo& info) {
 
 Napi::Value Ones(const Napi::CallbackInfo& info) {
   auto env = info.Env();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+  if (addon == nullptr) {
+    Napi::Error::New(env, "AddonData missing for ones").ThrowAsJavaScriptException();
+    return env.Null();
+  }
   if (info.Length() < 1) {
     Napi::TypeError::New(env, "ones expects a shape array")
         .ThrowAsJavaScriptException();
@@ -926,8 +946,8 @@ Napi::Value Ones(const Napi::CallbackInfo& info) {
   }
   auto dtype = mlx::core::float32;
   size_t streamIndex = 1;
-  if (info.Length() >= 2 && IsDtypeArg(env, info[1])) {
-    dtype = MaybeParseDtype(env, info[1], dtype);
+  if (info.Length() >= 2 && IsDtypeArg(env, info[1], *addon)) {
+    dtype = MaybeParseDtype(env, info[1], dtype, *addon);
     if (env.IsExceptionPending()) {
       return env.Null();
     }
@@ -944,6 +964,11 @@ Napi::Value Ones(const Napi::CallbackInfo& info) {
 
 Napi::Value Full(const Napi::CallbackInfo& info) {
   auto env = info.Env();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+  if (addon == nullptr) {
+    Napi::Error::New(env, "AddonData missing for full").ThrowAsJavaScriptException();
+    return env.Null();
+  }
   if (info.Length() < 2) {
     Napi::TypeError::New(env, "full expects shape and fill value")
         .ThrowAsJavaScriptException();
@@ -959,8 +984,8 @@ Napi::Value Full(const Napi::CallbackInfo& info) {
   }
   auto dtype = mlx::core::float32;
   size_t streamIndex = 2;
-  if (info.Length() >= 3 && IsDtypeArg(env, info[2])) {
-    dtype = MaybeParseDtype(env, info[2], dtype);
+  if (info.Length() >= 3 && IsDtypeArg(env, info[2], *addon)) {
+    dtype = MaybeParseDtype(env, info[2], dtype, *addon);
     if (env.IsExceptionPending()) {
       return env.Null();
     }

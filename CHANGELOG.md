@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2025-09-21 — Node 22 / Metal GPU transliteration baseline
+
+- Upstream MLX Metal JIT generator is used (no custom JIT): the build runs
+  `mlx/backend/metal/make_compiled_preamble.sh` to emit jit/*.cpp into
+  `node/generated/jit`, which are compiled into `mlx_core.a` alongside
+  `compiled.cpp` and `jit_kernels.cpp`.
+- Fixed dtype parsing crash by using per-callback AddonData (mirrors Python bindings)
+  and parsing the Dtype.key accessor. Dtype objects only are accepted; strings are
+  rejected.
+- Reaffirmed strict Python MLX parity for signatures, dtype inference, and keyword‑only
+  stream. Transliteration (no invention) is the policy going forward.
+- Documentation added: `docs/ARCHITECTURE.md`, `docs/PORTING_NOTES.md`,
+  `docs/BUILDING.md`.
+
 ## 2025-09-20 — Node 22 / Metal GPU checkpoint
 
 - Node-API (N-API) stabilization for MLX on Node 22:
