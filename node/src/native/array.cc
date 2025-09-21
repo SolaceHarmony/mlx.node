@@ -37,6 +37,10 @@ mlx::core::Dtype MaybeParseDtype(
     mlx::core::Dtype fallback,
     mlx::node::AddonData& data);
 
+// Forward declaration: parse nested JS numeric arrays into flat data + dims
+static bool ParseNestedNumberArray(Napi::Env env, const Napi::Value& v,
+                                   std::vector<double>& data, std::vector<int>& dims);
+
 const std::unordered_map<std::string, mlx::core::Dtype>& DtypeLookup() {
   static const std::unordered_map<std::string, mlx::core::Dtype> mapping = {
       {"bool", mlx::core::bool_},       {"int8", mlx::core::int8},
@@ -780,44 +784,268 @@ Napi::Object WrapArray(
   return data.array_constructor.New({external});
 }
 
-Napi::Value ArrayFactory(const Napi::CallbackInfo& info) {
+Napi::Value AsArray(const Napi::CallbackInfo& info) {
   auto env = info.Env();
-  if (info.Length() < 1 || !info[0].IsTypedArray()) {
-    Napi::TypeError::New(env, "array expects a TypedArray as first argument")
-        .ThrowAsJavaScriptException();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+  if (addon == nullptr) {
+    Napi::Error::New(env, "AddonData missing for asarray").ThrowAsJavaScriptException();
     return env.Null();
   }
-  auto typed = info[0].As<Napi::TypedArray>();
-  if (info.Length() < 2 || !info[1].IsArray()) {
-    Napi::TypeError::New(env, "array(typed, shape[, dtype][, stream]) expected")
-        .ThrowAsJavaScriptException();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "asarray expects at least one argument").ThrowAsJavaScriptException();
     return env.Null();
   }
 
-  auto shapeArray = info[1].As<Napi::Array>();
+  // Parse optional dtype and stream (kw-only last)
   std::optional<mlx::core::Dtype> maybeDtype;
-  size_t streamIndex = 2;
-  if (info.Length() >= 3) {
-    auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
-    if (addon && IsDtypeArg(env, info[2], *addon)) {
-      maybeDtype = MaybeParseDtype(env, info[2], mlx::core::float32, *addon);
-      if (env.IsExceptionPending()) return env.Null();
-      streamIndex = 3;
-    }
+  size_t streamIndex = 1;
+  if (info.Length() >= 2 && IsDtypeArg(env, info[1], *addon)) {
+    maybeDtype = MaybeParseDtype(env, info[1], mlx::core::float32, *addon);
+    if (env.IsExceptionPending()) return env.Null();
+    streamIndex = 2;
   }
   auto streamArg = GetStreamArgument(info, streamIndex);
   if (env.IsExceptionPending()) return env.Null();
 
-  auto arrOpt = ArrayWrapper::BuildFromTyped(env, typed, shapeArray, maybeDtype);
-  if (!arrOpt.has_value()) return env.Null();
-  std::shared_ptr<mlx::core::array> tensor;
-  if (!std::holds_alternative<std::monostate>(streamArg)) {
-    // If a stream/device was provided, move array to that stream's device
-    tensor = std::make_shared<mlx::core::array>(mlx::core::copy(arrOpt.value(), streamArg));
-  } else {
-    tensor = std::make_shared<mlx::core::array>(std::move(arrOpt.value()));
+  // Case A: already an mlx.core.Array
+  if (info[0].IsObject()) {
+    auto obj = info[0].As<Napi::Object>();
+    auto ctor = addon->array_constructor.Value();
+    if (!ctor.IsEmpty() && obj.InstanceOf(ctor)) {
+      const auto* wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(obj);
+      if (!wrapper) {
+        Napi::TypeError::New(env, "Invalid mlx.core.Array").ThrowAsJavaScriptException();
+        return env.Null();
+      }
+      auto a = wrapper->tensor();
+      bool changed = false;
+      if (maybeDtype.has_value() && maybeDtype.value() != a.dtype()) {
+        a = mlx::core::astype(a, maybeDtype.value(), streamArg);
+        changed = true;
+      }
+      if (!std::holds_alternative<std::monostate>(streamArg)) {
+        // If only stream differs, copy; if dtype cast above already copied, skip
+        if (!changed) {
+          a = mlx::core::copy(a, streamArg);
+          changed = true;
+        }
+      }
+      // If nothing changed, return original object
+      if (!changed) return obj;
+      return WrapArray(env, std::make_shared<mlx::core::array>(std::move(a)));
+    }
   }
-  return WrapArray(env, tensor);
+
+  // Case B: TypedArray / ArrayBuffer / Buffer → wrap as array (1D by default)
+  if (info[0].IsTypedArray()) {
+    auto typed = info[0].As<Napi::TypedArray>();
+    Napi::Array shapeArray = Napi::Array::New(env, 1);
+    shapeArray[(uint32_t)0u] = Napi::Number::New(env, (double)typed.ElementLength());
+    auto arrOpt = ArrayWrapper::BuildFromTyped(env, typed, shapeArray, maybeDtype);
+    if (!arrOpt.has_value()) return env.Null();
+    auto a = std::make_shared<mlx::core::array>(std::move(arrOpt.value()));
+    if (!std::holds_alternative<std::monostate>(streamArg)) {
+      *a = mlx::core::copy(*a, streamArg);
+    }
+    return WrapArray(env, a);
+  }
+
+  // Case C: nested JS arrays / scalars → reuse ArrayFactory pathways
+  if (info[0].IsArray()) {
+    std::vector<double> flat; std::vector<int> dims;
+    if (!ParseNestedNumberArray(env, info[0], flat, dims)) return env.Null();
+    mlx::core::Shape shape; for (int d: dims) shape.push_back(d);
+    auto dtype = maybeDtype.value_or(mlx::core::float32);
+    auto a = std::make_shared<mlx::core::array>(flat.begin(), shape.empty()? mlx::core::Shape{(int)flat.size()} : shape, dtype);
+    if (!std::holds_alternative<std::monostate>(streamArg)) {
+      *a = mlx::core::copy(*a, streamArg);
+    }
+    return WrapArray(env, a);
+  }
+
+  if (info[0].IsNumber() || info[0].IsBoolean() || info[0].IsBigInt()) {
+    auto infer = [&](const Napi::Value& v) {
+      if (v.IsBoolean()) return mlx::core::bool_;
+      if (v.IsBigInt()) return mlx::core::int64;
+      double d = v.As<Napi::Number>().DoubleValue();
+      double r = std::floor(d);
+      if (std::fabs(d - r) < 1e-12 && d >= std::numeric_limits<int32_t>::min() && d <= std::numeric_limits<int32_t>::max()) return mlx::core::int32;
+      return mlx::core::float32;
+    };
+    auto dtype = maybeDtype.value_or(infer(info[0]));
+    double scalar = info[0].IsBoolean() ? (info[0].As<Napi::Boolean>().Value() ? 1.0 : 0.0)
+                                        : info[0].IsBigInt() ? info[0].As<Napi::BigInt>().ToNumber().DoubleValue()
+                                                             : info[0].As<Napi::Number>().DoubleValue();
+    auto a = std::make_shared<mlx::core::array>(scalar, dtype);
+    if (!std::holds_alternative<std::monostate>(streamArg)) *a = mlx::core::copy(*a, streamArg);
+    return WrapArray(env, a);
+  }
+
+  Napi::TypeError::New(env, "Unsupported input to mx.core.asarray").ThrowAsJavaScriptException();
+  return env.Null();
+}
+// Helper: parse nested JS numeric arrays into flat vector + shape
+// Parse nested numeric arrays; dims accumulates dimension sizes (outermost-first).
+static bool ParseNestedNumberArray(Napi::Env env, const Napi::Value& v,
+                                   std::vector<double>& data, std::vector<int>& dims) {
+  if (v.IsArray()) {
+    auto arr = v.As<Napi::Array>();
+    size_t len = arr.Length();
+    if (dims.empty()) dims.push_back((int)len); else {
+      // verify consistent size at this depth
+      if (dims.back() != (int)len) dims.back() = (int)len; // accept ragged by overwriting
+    }
+    for (size_t i = 0; i < len; ++i) {
+      if (!ParseNestedNumberArray(env, arr[i], data, dims)) return false;
+    }
+    return true;
+  }
+  if (!v.IsNumber()) {
+    Napi::TypeError::New(env, "Only numeric JS arrays are supported in mx.core.array").ThrowAsJavaScriptException();
+    return false;
+  }
+  data.push_back(v.As<Napi::Number>().DoubleValue());
+  return true;
+}
+
+Napi::Value ArrayFactory(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+  if (addon == nullptr) {
+    Napi::Error::New(env, "AddonData missing for array").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  // Case A: first arg is TypedArray (optional explicit shape)
+  if (info.Length() >= 1 && info[0].IsTypedArray()) {
+    auto typed = info[0].As<Napi::TypedArray>();
+    // Optional explicit shape; if omitted, assume 1D [len]
+    Napi::Array shapeArray;
+    size_t argIndex = 1;
+    if (info.Length() >= 2 && info[1].IsArray()) {
+      shapeArray = info[1].As<Napi::Array>();
+      argIndex = 2;
+    } else {
+      shapeArray = Napi::Array::New(env, 1);
+      shapeArray[(uint32_t)0u] = Napi::Number::New(env, (double)typed.ElementLength());
+    }
+
+    std::optional<mlx::core::Dtype> maybeDtype;
+    size_t streamIndex = argIndex;
+    if (info.Length() > argIndex && IsDtypeArg(env, info[argIndex], *addon)) {
+      maybeDtype = MaybeParseDtype(env, info[argIndex], mlx::core::float32, *addon);
+      if (env.IsExceptionPending()) return env.Null();
+      streamIndex = argIndex + 1;
+    }
+    auto streamArg = GetStreamArgument(info, streamIndex);
+    if (env.IsExceptionPending()) return env.Null();
+
+    auto arrOpt = ArrayWrapper::BuildFromTyped(env, typed, shapeArray, maybeDtype);
+    if (!arrOpt.has_value()) return env.Null();
+    std::shared_ptr<mlx::core::array> tensor;
+    if (!std::holds_alternative<std::monostate>(streamArg)) {
+      tensor = std::make_shared<mlx::core::array>(mlx::core::copy(arrOpt.value(), streamArg));
+    } else {
+      tensor = std::make_shared<mlx::core::array>(std::move(arrOpt.value()));
+    }
+    return WrapArray(env, tensor);
+  }
+
+  // Case B: first arg is an existing mlx.core.Array; behave like asarray/astype
+  if (info.Length() >= 1 && info[0].IsObject()) {
+    auto obj = info[0].As<Napi::Object>();
+    auto ctor = addon->array_constructor.Value();
+    if (!ctor.IsEmpty() && obj.InstanceOf(ctor)) {
+      const auto* wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(obj);
+      if (!wrapper) {
+        Napi::TypeError::New(env, "Invalid mlx.core.Array").ThrowAsJavaScriptException();
+        return env.Null();
+      }
+      std::optional<mlx::core::Dtype> maybeDtype;
+      size_t streamIndex = 1;
+      if (info.Length() >= 2 && IsDtypeArg(env, info[1], *addon)) {
+        maybeDtype = MaybeParseDtype(env, info[1], wrapper->tensor().dtype(), *addon);
+        if (env.IsExceptionPending()) return env.Null();
+        streamIndex = 2;
+      }
+      auto streamArg = GetStreamArgument(info, streamIndex);
+      if (env.IsExceptionPending()) return env.Null();
+      auto a = wrapper->tensor();
+      if (maybeDtype.has_value() && maybeDtype.value() != a.dtype()) {
+        a = mlx::core::astype(a, maybeDtype.value(), streamArg);
+      } else if (!std::holds_alternative<std::monostate>(streamArg)) {
+        a = mlx::core::copy(a, streamArg);
+      }
+      return WrapArray(env, std::make_shared<mlx::core::array>(std::move(a)));
+    }
+  }
+
+  // Case C: nested JS numeric arrays
+  if (info.Length() >= 1 && info[0].IsArray()) {
+    std::vector<double> flat;
+    std::vector<int> dims;
+    if (!ParseNestedNumberArray(env, info[0], flat, dims)) return env.Null();
+    // Compute shape from dims; when ragged, dims may have been overwritten; treat as 1D
+    mlx::core::Shape shape;
+    if (!dims.empty()) {
+      for (int d : dims) shape.push_back(d);
+    } else {
+      shape.push_back((int)flat.size());
+    }
+    // Optional dtype and stream
+    std::optional<mlx::core::Dtype> maybeDtype;
+    size_t streamIndex = 1;
+    if (info.Length() >= 2 && IsDtypeArg(env, info[1], *addon)) {
+      maybeDtype = MaybeParseDtype(env, info[1], mlx::core::float32, *addon);
+      if (env.IsExceptionPending()) return env.Null();
+      streamIndex = 2;
+    }
+    auto streamArg = GetStreamArgument(info, streamIndex);
+    if (env.IsExceptionPending()) return env.Null();
+
+    // Build array from flattened doubles; use float32 default unless dtype provided
+    auto dtype = maybeDtype.value_or(mlx::core::float32);
+    auto tensor = std::make_shared<mlx::core::array>(flat.begin(), shape, dtype);
+    if (!std::holds_alternative<std::monostate>(streamArg)) {
+      *tensor = mlx::core::copy(*tensor, streamArg);
+    }
+    return WrapArray(env, tensor);
+  }
+
+  // Case D: scalar → rank-0
+  if (info.Length() >= 1 && (info[0].IsNumber() || info[0].IsBoolean() || info[0].IsBigInt())) {
+    std::optional<mlx::core::Dtype> maybeDtype;
+    size_t streamIndex = 1;
+    if (info.Length() >= 2 && IsDtypeArg(env, info[1], *addon)) {
+      maybeDtype = MaybeParseDtype(env, info[1], mlx::core::float32, *addon);
+      if (env.IsExceptionPending()) return env.Null();
+      streamIndex = 2;
+    }
+    auto streamArg = GetStreamArgument(info, streamIndex);
+    if (env.IsExceptionPending()) return env.Null();
+
+    // Infer dtype if omitted (bool->bool, integer Number->int32 else float32, BigInt->int64)
+    auto infer = [&](const Napi::Value& v) {
+      if (v.IsBoolean()) return mlx::core::bool_;
+      if (v.IsBigInt()) return mlx::core::int64;
+      double d = v.As<Napi::Number>().DoubleValue();
+      double r = std::floor(d);
+      if (std::fabs(d - r) < 1e-12 && d >= std::numeric_limits<int32_t>::min() && d <= std::numeric_limits<int32_t>::max()) return mlx::core::int32;
+      return mlx::core::float32;
+    };
+    auto dtype = maybeDtype.value_or(infer(info[0]));
+    double scalar = info[0].IsBoolean() ? (info[0].As<Napi::Boolean>().Value() ? 1.0 : 0.0)
+                                        : info[0].IsBigInt() ? info[0].As<Napi::BigInt>().ToNumber().DoubleValue()
+                                                             : info[0].As<Napi::Number>().DoubleValue();
+    auto tensor = std::make_shared<mlx::core::array>(scalar, dtype);
+    if (!std::holds_alternative<std::monostate>(streamArg)) {
+      *tensor = mlx::core::copy(*tensor, streamArg);
+    }
+    return WrapArray(env, tensor);
+  }
+
+  Napi::TypeError::New(env, "Unsupported input to mx.core.array").ThrowAsJavaScriptException();
+  return env.Null();
 }
 
 const ArrayWrapper* UnwrapArray(Napi::Env env, const Napi::Value& value) {
@@ -1422,6 +1650,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   // Classes and ops under core
   ArrayWrapper::Init(env, core);
   core.Set("array", Napi::Function::New(env, ArrayFactory, "array", &data));
+  core.Set("asarray", Napi::Function::New(env, AsArray, "asarray", &data));
   core.Set("zeros", Napi::Function::New(env, Zeros, "zeros", &data));
   core.Set("zeros_like", Napi::Function::New(env, ZerosLike, "zeros_like", &data));
   core.Set("ones", Napi::Function::New(env, Ones, "ones", &data));
