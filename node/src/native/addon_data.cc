@@ -14,9 +14,9 @@ AddonData& GetAddonData(Napi::Env env) {
   auto* data = env.GetInstanceData<AddonData>();
   if (data == nullptr) {
     data = new AddonData();
+    // Attach instance data with the default finalizer provided by node-addon-api,
+    // which will delete the pointer exactly once at env teardown.
     env.SetInstanceData<AddonData>(data);
-    env.AddCleanupHook(
-        [](void* ptr) { delete static_cast<AddonData*>(ptr); }, data);
   }
   return *data;
 }

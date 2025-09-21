@@ -85,6 +85,10 @@
       'vendor/mlx/distributed/distributed.cpp',
       'vendor/mlx/distributed/ops.cpp',
       'vendor/mlx/distributed/primitives.cpp',
+      # Provide stubs for distributed backends to satisfy link
+      'vendor/mlx/distributed/mpi/no_mpi.cpp',
+      'vendor/mlx/distributed/nccl/no_nccl.cpp',
+      'vendor/mlx/distributed/ring/no_ring.cpp',
       'vendor/mlx/dtype.cpp',
       'vendor/mlx/dtype_utils.cpp',
       'vendor/mlx/einsum.cpp',

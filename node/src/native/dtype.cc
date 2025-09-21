@@ -294,6 +294,16 @@ std::optional<mlx::core::Dtype> UnwrapDtype(
   return wrapper->dtype();
 }
 
+bool TryUnwrapDtype(
+    const Napi::Value& value,
+    AddonData& data,
+    mlx::core::Dtype& out) {
+  auto maybe = UnwrapDtype(value, data);
+  if (!maybe.has_value()) return false;
+  out = maybe.value();
+  return true;
+}
+
 std::optional<mlx::core::Dtype::Category> UnwrapCategory(
     const Napi::Value& value,
     AddonData& data) {

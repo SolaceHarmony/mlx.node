@@ -2,9 +2,32 @@
   "includes": ["scripts/mlx_sources.gypi"],
   "targets": [
     {
+      "target_name": "jit_embed",
+      "type": "executable",
+      "sources": [ "../labs/tools/jit_embed.cpp" ],
+      "include_dirs": [
+        "vendor/metal-cpp",
+        "vendor",
+        "../",
+        "/System/Library/Frameworks/Accelerate.framework/Frameworks/vecLib.framework/Headers"
+      ],
+      "defines": [ "FMT_HEADER_ONLY" ],
+      "cflags": [ "-fexceptions" ],
+      "cflags_cc": [ "-std=gnu++17", "-fexceptions", "-frtti" ],
+      "xcode_settings": {
+        "GCC_ENABLE_CPP_EXCEPTIONS": "YES",
+        "GCC_ENABLE_CPP_RTTI": "YES",
+        "CLANG_CXX_LIBRARY": "libc++",
+        "CLANG_CXX_LANGUAGE_STANDARD": "gnu++17"
+      }
+    },
+    {
       "target_name": "mlx_core",
       "type": "static_library",
-      "sources": ["<@(mlx_sources)"],
+      "sources": [
+        "<@(mlx_sources)",
+        "generated/metal_jit_preambles.cpp"
+      ],
       "include_dirs": [
         "vendor/metal-cpp",
         "vendor",
@@ -30,10 +53,19 @@
           "$(HEADER_SEARCH_PATHS)",
           "/System/Library/Frameworks/Accelerate.framework/Frameworks/vecLib.framework/Headers"
         ]
-      }
+      },
+      "actions": [
+        {
+          "action_name": "generate_metal_jit",
+          "inputs": [ "../labs/tools/jit_embed.cpp" ],
+          "outputs": [ "<(module_root_dir)/generated/metal_jit_preambles.cpp" ],
+          "action": [ "<(PRODUCT_DIR)/jit_embed", "<(module_root_dir)", "<(module_root_dir)/generated/metal_jit_preambles.cpp" ]
+        }
+      ],
+      "dependencies": [ "jit_embed" ]
     },
     {
-      "target_name": "mlx_array",
+      "target_name": "mlx",
       "sources": [
         "src/native/addon_data.cc",
         "src/native/array.cc",
