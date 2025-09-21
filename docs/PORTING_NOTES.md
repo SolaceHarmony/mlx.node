@@ -121,3 +121,48 @@ FAQ
 - “Where do I put device/stream?” → Always the last argument: `op(..., *, stream=...)`.
 - “Why does float16 come back as Uint16Array?” → Python mirrors raw 16‑bit pattern; so do we.
 
+Lessons Learned
+---------------
+- Use upstream MLX JIT generation, not custom code.
+  - MLX’s `make_compiled_preamble.sh` stitches MSL sources with the correct jit headers (e.g., `jit/bf16.h` selects the Metal‑specific `bf16.h`).
+  - Naively concatenating kernel sources breaks include ordering and feature flags; stick to the MLX preprocessor path.
+
+- Bind state per callback (info.Data), not via env globals.
+  - Dtype/Stream constructors must be read from `AddonData` that’s passed into each binding. Accessing env instance data at arbitrary times led to null derefs in early bring‑up.
+  - We now detect dtype via `Dtype.key` and unwrap using the constructor from `AddonData`.
+
+- Dtypes are objects only.
+  - Matching Python MLX, strings are not accepted for dtype. Export `mlx.float32`, etc., and treat them as identities.
+
+- GPU is not “just CPU pointers.”
+  - Even on UMA, Metal uses `MTLBuffer` resources with storage modes and explicit synchronization. A CPU pointer is not a GPU handle.
+  - MLX abstracts this correctly; from Node, we must feed MLX arrays (wrapped/buffered) and let it manage command encoders and sync.
+
+- Broadcasting: rely on MLX.
+  - For `full(shape, vals)`, when `vals` is an array, pass it to MLX and let MLX broadcast. If shapes don’t match, MLX raises a clear error.
+  - Don’t attempt to reimplement broadcast in the binding.
+
+- TypedArray ingestion rules.
+  - If shape is omitted, assume 1D `[len]`.
+  - Nested JS arrays: flatten and infer shape (numbers only); promotion rules will be unified with Python’s `to_array`.
+  - CPU no‑copy is possible only when dtype/layout match; on GPU we copy and schedule on a stream.
+
+- API surface discipline.
+  - Keep only Python MLX ops under `mlx.core`. Diagnostic helpers belong in `labs/` and should not leak into the public API.
+
+- Array dtype reporting.
+  - Python returns a `Dtype` object; Node currently returns a string but will be switched to return the `Dtype` object to match parity.
+
+- Build realities & artifacts.
+  - Generating JIT sources is heavy; we place them under `node/generated/jit/` and ignore them in git.
+  - Vendored `mlx.metallib` is large; GitHub warns about file size. Consider LFS if we split vendors later.
+  - Use `FMT_HEADER_ONLY` to avoid linking libfmt.
+
+- Lazy evaluation expectations.
+  - MLX arrays are lazy; reading `toTypedArray()` (or `data<T>()`) triggers evaluation and synchronization.
+  - Keep evaluation at the MLX API boundary; bindings shouldn’t manually flush command buffers.
+
+- Keyword‑only `stream` semantics.
+  - Always treat stream/device as the last argument, mirroring Python’s kw‑only param.
+  - This avoids ambiguous positional parsing and keeps 1:1 signatures.
+
