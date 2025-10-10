@@ -55,20 +55,42 @@
       "cflags_cc!": [ "-fno-exceptions" ],
       "defines": [
         "FMT_HEADER_ONLY",
-        "MLX_VERSION=\"0.29.0\"",
-        "MLX_USE_ACCELERATE",
-        "METAL_PATH=\"<(module_root_dir)/vendor/mlx/backend/metal/kernels/mlx.metallib\""
+        "MLX_VERSION=\"0.29.0\""
       ],
-      "xcode_settings": {
-        "GCC_ENABLE_CPP_EXCEPTIONS": "YES",
-        "GCC_ENABLE_CPP_RTTI": "YES",
-        "CLANG_CXX_LIBRARY": "libc++",
-        "CLANG_CXX_LANGUAGE_STANDARD": "gnu++17",
-        "HEADER_SEARCH_PATHS": [
-          "$(HEADER_SEARCH_PATHS)",
-          "/System/Library/Frameworks/Accelerate.framework/Frameworks/vecLib.framework/Headers"
-        ]
-      },
+      "conditions": [
+        ['OS=="mac"', {
+          "defines": [
+            "MLX_USE_ACCELERATE",
+            "METAL_PATH=\"<(module_root_dir)/vendor/mlx/backend/metal/kernels/mlx.metallib\""
+          ],
+          "xcode_settings": {
+            "GCC_ENABLE_CPP_EXCEPTIONS": "YES",
+            "GCC_ENABLE_CPP_RTTI": "YES",
+            "CLANG_CXX_LIBRARY": "libc++",
+            "CLANG_CXX_LANGUAGE_STANDARD": "gnu++17",
+            "HEADER_SEARCH_PATHS": [
+              "$(HEADER_SEARCH_PATHS)",
+              "/System/Library/Frameworks/Accelerate.framework/Frameworks/vecLib.framework/Headers"
+            ]
+          }
+        }],
+        ['OS=="linux"', {
+          "defines": [
+            "MLX_USE_BLAS"
+          ],
+          "cflags": [
+            "-ULAPACK_GLOBAL",
+            "-ULAPACK_NAME"
+          ],
+          "include_dirs": [
+            "/usr/include"
+          ],
+          "libraries": [
+            "-lblas",
+            "-llapack"
+          ]
+        }]
+      ],
       "actions": [
         {
           "action_name": "generate_metal_jit",
@@ -130,10 +152,8 @@
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")",
         "<!@(node -p \"require('nan')\")",
-        "vendor/metal-cpp",
         "vendor",
-        "../",
-        "/System/Library/Frameworks/Accelerate.framework/Frameworks/vecLib.framework/Headers"
+        "../"
       ],
       "dependencies": [
         "<!@(node -p \"require('node-addon-api').gyp\")",
@@ -145,26 +165,37 @@
       "cflags_cc!": [ "-fno-exceptions" ],
       "defines": [
         "NAPI_CPP_EXCEPTIONS",
-        "MLX_VERSION=\"0.29.0\"",
-        "MLX_USE_ACCELERATE",
-        "METAL_PATH=\"<(module_root_dir)/vendor/mlx/backend/metal/kernels/mlx.metallib\""
+        "MLX_VERSION=\"0.29.0\""
       ],
-      "xcode_settings": {
-        "GCC_ENABLE_CPP_EXCEPTIONS": "YES",
-        "GCC_ENABLE_CPP_RTTI": "YES",
-        "CLANG_CXX_LIBRARY": "libc++",
-        "CLANG_CXX_LANGUAGE_STANDARD": "gnu++17",
-        "HEADER_SEARCH_PATHS": [
-          "$(HEADER_SEARCH_PATHS)",
-          "/System/Library/Frameworks/Accelerate.framework/Frameworks/vecLib.framework/Headers"
-        ],
-        "OTHER_LDFLAGS": [
-          "-framework", "Metal",
-          "-framework", "Accelerate",
-          "-framework", "Foundation",
-          "-framework", "QuartzCore"
-        ]
-      }
+      "conditions": [
+        ['OS=="mac"', {
+          "defines": [
+            "MLX_USE_ACCELERATE",
+            "METAL_PATH=\"<(module_root_dir)/vendor/mlx/backend/metal/kernels/mlx.metallib\""
+          ],
+          "include_dirs": [
+            "vendor/metal-cpp",
+            "/System/Library/Frameworks/Accelerate.framework/Frameworks/vecLib.framework/Headers"
+          ],
+          "xcode_settings": {
+            "GCC_ENABLE_CPP_EXCEPTIONS": "YES",
+            "GCC_ENABLE_CPP_RTTI": "YES",
+            "CLANG_CXX_LIBRARY": "libc++",
+            "CLANG_CXX_LANGUAGE_STANDARD": "gnu++17",
+            "OTHER_LDFLAGS": [
+              "-framework", "Metal",
+              "-framework", "Accelerate",
+              "-framework", "Foundation",
+              "-framework", "QuartzCore"
+            ]
+          }
+        }],
+        ['OS=="linux"', {
+          "defines": [
+            "MLX_USE_BLAS"
+          ]
+        }]
+      ]
     }
   ]
 }

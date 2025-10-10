@@ -73,7 +73,7 @@ inline auto lapack_invoke(Func func, Args&&... args) -> decltype(auto) {
 
 } // namespace mlx::core::detail
 
-#if defined(LAPACK_GLOBAL) || defined(LAPACK_NAME)
+#if 0 // defined(LAPACK_GLOBAL) || defined(LAPACK_NAME)
 
 // This is to work around a change in the function signatures of lapack >= 3.9.1
 // where functions taking char* also include a strlen argument, see a similar
@@ -99,15 +99,39 @@ inline auto lapack_invoke(Func func, Args&&... args) -> decltype(auto) {
     }                                                              \
   }
 
+#define INSTANTIATE_LAPACK_REAL_1_CHAR_ARG(FUNC)                   \
+  template <typename T, typename... Args>                          \
+  void FUNC(Args... args) {                                        \
+    if constexpr (std::is_same_v<T, float>) {                      \
+      ::mlx::core::detail::lapack_invoke(                         \
+          MLX_LAPACK_FUNC(s##FUNC), std::forward<Args>(args)..., 1); \
+    } else if constexpr (std::is_same_v<T, double>) {              \
+      ::mlx::core::detail::lapack_invoke(                         \
+          MLX_LAPACK_FUNC(d##FUNC), std::forward<Args>(args)..., 1); \
+    }                                                              \
+  }
+
+#define INSTANTIATE_LAPACK_REAL_2_CHAR_ARG(FUNC)                   \
+  template <typename T, typename... Args>                          \
+  void FUNC(Args... args) {                                        \
+    if constexpr (std::is_same_v<T, float>) {                      \
+      ::mlx::core::detail::lapack_invoke(                         \
+          MLX_LAPACK_FUNC(s##FUNC), std::forward<Args>(args)..., 1, 1); \
+    } else if constexpr (std::is_same_v<T, double>) {              \
+      ::mlx::core::detail::lapack_invoke(                         \
+          MLX_LAPACK_FUNC(d##FUNC), std::forward<Args>(args)..., 1, 1); \
+    }                                                              \
+  }
+
 INSTANTIATE_LAPACK_REAL(geqrf)
 INSTANTIATE_LAPACK_REAL(orgqr)
-INSTANTIATE_LAPACK_REAL(syevd)
-INSTANTIATE_LAPACK_REAL(geev)
-INSTANTIATE_LAPACK_REAL(potrf)
-INSTANTIATE_LAPACK_REAL(gesdd)
+INSTANTIATE_LAPACK_REAL_2_CHAR_ARG(syevd)
+INSTANTIATE_LAPACK_REAL_2_CHAR_ARG(geev)
+INSTANTIATE_LAPACK_REAL_1_CHAR_ARG(potrf)
+INSTANTIATE_LAPACK_REAL_1_CHAR_ARG(gesdd)
 INSTANTIATE_LAPACK_REAL(getrf)
 INSTANTIATE_LAPACK_REAL(getri)
-INSTANTIATE_LAPACK_REAL(trtri)
+INSTANTIATE_LAPACK_REAL_2_CHAR_ARG(trtri)
 
 #define INSTANTIATE_LAPACK_COMPLEX(FUNC)                                  \
   template <typename T, typename... Args>                                 \
@@ -121,4 +145,16 @@ INSTANTIATE_LAPACK_REAL(trtri)
     }                                                                     \
   }
 
-INSTANTIATE_LAPACK_COMPLEX(heevd)
+#define INSTANTIATE_LAPACK_COMPLEX_2_CHAR_ARG(FUNC)                        \
+  template <typename T, typename... Args>                                  \
+  void FUNC(Args... args) {                                                \
+    if constexpr (std::is_same_v<T, std::complex<float>>) {                \
+      ::mlx::core::detail::lapack_invoke(                                \
+          MLX_LAPACK_FUNC(c##FUNC), std::forward<Args>(args)..., 1, 1);     \
+    } else if constexpr (std::is_same_v<T, std::complex<double>>) {       \
+      ::mlx::core::detail::lapack_invoke(                                \
+          MLX_LAPACK_FUNC(z##FUNC), std::forward<Args>(args)..., 1, 1);     \
+    }                                                                      \
+  }
+
+INSTANTIATE_LAPACK_COMPLEX_2_CHAR_ARG(heevd)

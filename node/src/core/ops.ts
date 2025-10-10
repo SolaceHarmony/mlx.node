@@ -125,10 +125,27 @@ export function swapaxes(
   return MLXArray.fromHandle(handle);
 }
 
+export interface UnaryOpOptions extends StreamOptions {}
+
+function unaryOp(
+  name: 'negative',
+  a: MLXArray,
+  options?: UnaryOpOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  appendStreamArg(args, options?.stream);
+  const handle = addon[name](...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export function negative(a: MLXArray, options?: UnaryOpOptions): MLXArray {
+  return unaryOp('negative', a, options);
+}
+
 export interface BinaryOpOptions extends StreamOptions {}
 
 function binaryOp(
-  name: 'add' | 'multiply',
+  name: 'add' | 'multiply' | 'subtract' | 'divide',
   a: MLXArray,
   b: MLXArray,
   options?: BinaryOpOptions,
@@ -149,6 +166,22 @@ export function multiply(
   options?: BinaryOpOptions,
 ): MLXArray {
   return binaryOp('multiply', a, b, options);
+}
+
+export function subtract(
+  a: MLXArray,
+  b: MLXArray,
+  options?: BinaryOpOptions,
+): MLXArray {
+  return binaryOp('subtract', a, b, options);
+}
+
+export function divide(
+  a: MLXArray,
+  b: MLXArray,
+  options?: BinaryOpOptions,
+): MLXArray {
+  return binaryOp('divide', a, b, options);
 }
 
 export interface WhereOptions extends StreamOptions {}

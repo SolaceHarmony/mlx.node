@@ -11,6 +11,19 @@
   "files": [
     "index.js",
     "build/Release/mlx.node"
-  ]
+  ],
+  "gypfile": true,
+  "scripts": {
+    "install": "node-gyp rebuild",
+    "test": "mocha --require ts-node/register test/**/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.6",
+    "mocha": "^10.2.0",
+    "nan": "^2.19.0",
+    "node-addon-api": "^7.1.0",
+    "node-gyp": "^10.1.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
 }
-

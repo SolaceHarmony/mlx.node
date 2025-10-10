@@ -751,20 +751,32 @@ TEST_CASE("test is nan") {
 TEST_CASE("test is inf") {
   array x(1.0f);
   CHECK_FALSE(isinf(x).item<bool>());
+  CHECK_FALSE(isposinf(x).item<bool>());
+  CHECK_FALSE(isneginf(x).item<bool>());
 
   auto inf = std::numeric_limits<float>::infinity();
 
   array y(inf);
   CHECK(isinf(y).item<bool>());
+  CHECK(isposinf(y).item<bool>());
+  CHECK_FALSE(isneginf(y).item<bool>());
 
   auto neginf = -std::numeric_limits<float>::infinity();
   CHECK(isinf(array(neginf)).item<bool>());
+  CHECK_FALSE(isposinf(array(neginf)).item<bool>());
+  CHECK(isneginf(array(neginf)).item<bool>());
 
   array z = identity(7);
   CHECK_FALSE(any(isinf(z)).item<bool>());
+  CHECK_FALSE(any(isposinf(z)).item<bool>());
+  CHECK_FALSE(any(isneginf(z)).item<bool>());
 
-  array w = array({1.0f, inf, 2.0f});
-  CHECK(array_equal(array({false, true, false}), isinf(w)).item<bool>());
+  array w = array({1.0f, inf, 2.0f, neginf});
+  CHECK(array_equal(array({false, true, false, true}), isinf(w)).item<bool>());
+  CHECK(
+      array_equal(array({false, true, false, false}), isposinf(w)).item<bool>());
+  CHECK(
+      array_equal(array({false, false, false, true}), isneginf(w)).item<bool>());
 
   array a(1.0f, bfloat16);
   CHECK_FALSE(isinf(a).item<bool>());
@@ -774,9 +786,11 @@ TEST_CASE("test is inf") {
 
   array c(inf, bfloat16);
   CHECK(isinf(c).item<bool>());
+  CHECK(isposinf(c).item<bool>());
 
   array d(inf, float16);
   CHECK(isinf(d).item<bool>());
+  CHECK(isposinf(d).item<bool>());
 }
 
 TEST_CASE("test all close") {
@@ -1325,9 +1339,48 @@ TEST_CASE("test arithmetic unary ops") {
 
   constexpr float neginf = -std::numeric_limits<float>::infinity();
 
-  // Test floor and ceil
+  // Test floor, ceil and round
   {
     array x(1.0f);
+    CHECK_EQ(floor(x).item<float>(), 1.0f);
+    CHECK_EQ(ceil(x).item<float>(), 1.0f);
+    CHECK_EQ(round(x).item<float>(), 1.0f);
+
+    x = array(1.5f);
+    CHECK_EQ(floor(x).item<float>(), 1.0f);
+    CHECK_EQ(ceil(x).item<float>(), 2.0f);
+    CHECK_EQ(round(x).item<float>(), 2.0f);
+
+    x = array(-1.5f);
+    CHECK_EQ(floor(x).item<float>(), -2.0f);
+    CHECK_EQ(ceil(x).item<float>(), -1.0f);
+    CHECK_EQ(round(x).item<float>(), -2.0f);
+
+    x = array({0.5, -0.5, 1.5, -1.5, 2.3, 2.6});
+    CHECK(array_equal(round(x), array({0.0f, -0.0f, 2.0f, -2.0f, 2.0f, 3.0f}))
+              .item<bool>());
+
+    x = array(neginf);
+    CHECK_EQ(floor(x).item<float>(), neginf);
+    CHECK_EQ(ceil(x).item<float>(), neginf);
+    CHECK(isnan(round(x).item<float>()));
+
+    x = array(std::complex<float>(1.0f, 1.0f));
+    CHECK_THROWS_AS(floor(x), std::invalid_argument);
+    CHECK_THROWS_AS(ceil(x), std::invalid_argument);
+    CHECK_THROWS_AS(round(x), std::invalid_argument);
+
+    x = array({11, 222, 32});
+    CHECK(array_equal(round(x, -1), array({10, 220, 30})).item<bool>());
+  }
+
+  // Test round
+  {
+    array x({0.5, -0.5, 1.5, -1.5, 2.3, 2.6});
+    CHECK(array_equal(round(x), array({0, -0, 2, -2, 2, 3})).item<bool>());
+
+    x = array({11, 222, 32});
+    CHECK(array_equal(round(x, -1), array({10, 220, 30})).item<bool>());
     CHECK_EQ(floor(x).item<float>(), 1.0f);
     CHECK_EQ(ceil(x).item<float>(), 1.0f);
 
@@ -1626,6 +1679,33 @@ TEST_CASE("test arithmetic unary ops") {
     x = full({3, 3}, 2.0f);
     CHECK(array_equal(reciprocal(x), full({3, 3}, 0.5f)).item<bool>());
   }
+}
+
+TEST_CASE("test signbit") {
+  array x({-1.0f, 0.0f, 1.0f, -0.0f});
+  auto out = signbit(x);
+  CHECK_EQ(out.dtype(), bool_);
+  CHECK(array_equal(out, array({true, false, false, true})).item<bool>());
+
+  x = array({-1, 0, 1});
+  out = signbit(x);
+  CHECK_EQ(out.dtype(), bool_);
+  CHECK(array_equal(out, array({true, false, false})).item<bool>());
+
+  x = array({1u, 0u, 1u});
+  out = signbit(x);
+  CHECK_EQ(out.dtype(), bool_);
+  CHECK(array_equal(out, array({false, false, false})).item<bool>());
+
+  x = array({false, true});
+  out = signbit(x);
+  CHECK_EQ(out.dtype(), bool_);
+  CHECK(array_equal(out, array({false, false})).item<bool>());
+
+  constexpr float inf = std::numeric_limits<float>::infinity();
+  x = array({inf, -inf, NAN});
+  out = signbit(x);
+  CHECK(array_equal(out, array({false, true, false})).item<bool>());
 }
 
 TEST_CASE("test error functions") {

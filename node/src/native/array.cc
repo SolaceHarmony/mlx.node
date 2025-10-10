@@ -1792,6 +1792,68 @@ Napi::Value Multiply(const Napi::CallbackInfo& info) {
   return WrapArray(env, tensor);
 }
 
+Napi::Value Subtract(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 2) {
+    Napi::TypeError::New(env, "subtract expects two arrays")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto* a = UnwrapArray(env, info[0]);
+  auto* b = UnwrapArray(env, info[1]);
+  if (env.IsExceptionPending() || a == nullptr || b == nullptr) {
+    return env.Null();
+  }
+  auto streamArg = GetStreamArgument(info, 2);
+  if (env.IsExceptionPending()) {
+    return env.Null();
+  }
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::subtract(a->tensor(), b->tensor(), streamArg));
+  return WrapArray(env, tensor);
+}
+
+Napi::Value Divide(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 2) {
+    Napi::TypeError::New(env, "divide expects two arrays")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto* a = UnwrapArray(env, info[0]);
+  auto* b = UnwrapArray(env, info[1]);
+  if (env.IsExceptionPending() || a == nullptr || b == nullptr) {
+    return env.Null();
+  }
+  auto streamArg = GetStreamArgument(info, 2);
+  if (env.IsExceptionPending()) {
+    return env.Null();
+  }
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::divide(a->tensor(), b->tensor(), streamArg));
+  return WrapArray(env, tensor);
+}
+
+Napi::Value Negative(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "negative expects one array")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto* a = UnwrapArray(env, info[0]);
+  if (env.IsExceptionPending() || a == nullptr) {
+    return env.Null();
+  }
+  auto streamArg = GetStreamArgument(info, 1);
+  if (env.IsExceptionPending()) {
+    return env.Null();
+  }
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::negative(a->tensor(), streamArg));
+  return WrapArray(env, tensor);
+}
+
 Napi::Value Matmul(const Napi::CallbackInfo& info) {
   auto env = info.Env();
   if (info.Length() < 2) {
@@ -1952,6 +2014,9 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   core.Set("arange", Napi::Function::New(env, Arange, "arange", &data));
   core.Set("add", Napi::Function::New(env, Add, "add", &data));
   core.Set("multiply", Napi::Function::New(env, Multiply, "multiply", &data));
+  core.Set("subtract", Napi::Function::New(env, Subtract, "subtract", &data));
+  core.Set("divide", Napi::Function::New(env, Divide, "divide", &data));
+  core.Set("negative", Napi::Function::New(env, Negative, "negative", &data));
   core.Set("matmul", Napi::Function::New(env, Matmul, "matmul", &data));
   core.Set("where", Napi::Function::New(env, Where, "where", &data));
 
