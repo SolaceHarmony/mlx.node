@@ -6,7 +6,7 @@
  */
 
 import MLXArray, { zeros, zerosLike } from '../core/array';
-import { add, multiply, subtract, sign } from '../core/ops';
+import { add, multiply, subtract, sign, square, sqrt, divide } from '../core/ops';
 import { treeMap } from '../utils';
 
 /**
@@ -499,9 +499,100 @@ export class Lion extends Optimizer {
   }
 }
 
+/**
+ * RMSprop Optimizer Options
+ */
+export interface RMSpropOptions {
+  /** The learning rate */
+  learningRate: SchedulableParam;
+  /** The smoothing constant α (default: 0.99) */
+  alpha?: number;
+  /** The term ε added to the denominator to improve numerical stability (default: 1e-8) */
+  eps?: number;
+}
+
+/**
+ * The RMSprop optimizer.
+ *
+ * RMSprop is an adaptive learning rate optimization algorithm that
+ * uses a moving average of squared gradients to normalize the gradient.
+ *
+ * Reference: Tieleman, T. and Hinton, G. 2012. Lecture 6.5-rmsprop,
+ * coursera: Neural networks for machine learning
+ *
+ * The algorithm updates parameters as follows:
+ *
+ *   v_{t+1} = α * v_t + (1 - α) * g_t²
+ *   w_{t+1} = w_t - λ * g_t / (√v_{t+1} + ε)
+ *
+ * where λ is the learning rate, α is the smoothing constant,
+ * g_t is the gradient, v_t is the moving average of squared gradients,
+ * and ε is a small constant for numerical stability.
+ *
+ * @example
+ * ```typescript
+ * const optimizer = new RMSprop({ learningRate: 0.001, alpha: 0.99 });
+ * // ... during training:
+ * // const updatedParams = optimizer.applyGradients(gradients, parameters);
+ * ```
+ */
+export class RMSprop extends Optimizer {
+  alpha: number;
+  eps: number;
+
+  constructor(options: RMSpropOptions) {
+    super();
+
+    const { learningRate, alpha = 0.99, eps = 1e-8 } = options;
+
+    if (alpha < 0.0) {
+      throw new Error(`RMSprop alpha should be >=0, ${alpha} was provided instead`);
+    }
+    if (eps <= 0.0) {
+      throw new Error(`RMSprop epsilon should be >0, ${eps} was provided instead`);
+    }
+
+    this._maybeSchedule('learning_rate', learningRate);
+    this.alpha = alpha;
+    this.eps = eps;
+  }
+
+  protected initSingle(parameter: MLXArray, state: Record<string, any>): void {
+    // Initialize moving average of squared gradients with zerosLike
+    state.v = zerosLike(parameter);
+  }
+
+  protected applySingle(
+    gradient: MLXArray,
+    parameter: MLXArray,
+    state: Record<string, any>
+  ): MLXArray {
+    const lr = this.learningRate;
+    const alpha = this.alpha;
+    const eps = this.eps;
+
+    // Get moving average of squared gradients from state
+    let v = state.v;
+
+    // Update moving average: v = α * v + (1 - α) * g²
+    const gradSquared = square(gradient);
+    v = add(multiply(alpha, v), multiply(1 - alpha, gradSquared));
+
+    // Store updated moving average
+    state.v = v;
+
+    // Compute update: w = w - lr * g / (√v + ε)
+    const sqrtV = sqrt(v);
+    const denominator = add(sqrtV, eps);
+    const update = divide(gradient, denominator);
+    return subtract(parameter, multiply(lr, update));
+  }
+}
+
 export default {
   Optimizer,
   SGD,
   Adam,
   Lion,
+  RMSprop,
 };
