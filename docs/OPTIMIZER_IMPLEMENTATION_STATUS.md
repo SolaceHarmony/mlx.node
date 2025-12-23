@@ -96,8 +96,10 @@ The Node.js optimizer implementation follows the same design as Python MLX:
 | Tree-based parameters | ✅ | ✅ | Complete |
 | Scheduler support | ✅ | ✅ | Complete |
 | `SGD` class structure | ✅ | ✅ | Complete |
-| `SGD` gradient updates | ✅ | ⚠️ | Blocked on core ops |
-| Other optimizers (Adam, AdamW, etc.) | ✅ | ❌ | Not yet implemented |
+| `SGD` gradient updates | ✅ | ⚠️ | Blocked on astype |
+| `Lion` optimizer | ✅ | ✅ | Complete |
+| `RMSprop` optimizer | ✅ | ✅ | Complete |
+| Other optimizers (Adam, AdamW, Adagrad, etc.) | ✅ | ⚠️ | Partial (Adam structure exists) |
 
 ## Why Not a C++ Binding?
 
@@ -150,10 +152,12 @@ To complete optimizer functionality:
 
 1. ✅ **Optimizer base class** - DONE
 2. ✅ **SGD class structure** - DONE  
-3. ⚠️ **Core array operations** - IN PROGRESS (add, subtract, multiply, divide)
-4. ⬜ **Complete SGD.applySingle()** - Waiting on #3
-5. ⬜ **Implement other optimizers** - Adam, AdamW, RMSprop, etc.
-6. ⬜ **Integration tests** - Full gradient update testing
+3. ✅ **Core array operations** - DONE (add, subtract, multiply, divide, square, sqrt, sign)
+4. ⚠️ **Complete SGD.applySingle()** - Blocked on missing astype operation
+5. ✅ **Lion optimizer** - DONE (fully implemented)
+6. ✅ **RMSprop optimizer** - DONE (fully implemented)
+7. ⬜ **Implement other optimizers** - Adam, AdamW, Adagrad, etc.
+8. ⬜ **Integration tests** - Full gradient update testing
 
 ## References
 

@@ -9,12 +9,13 @@ This module provides optimizer implementations for training neural networks with
 - **Base `Optimizer` class**: Abstract base class with state management, scheduler support, and parameter tree handling
 - **`SGD` optimizer class**: Stochastic Gradient Descent with momentum, weight decay, dampening, and Nesterov momentum support
 - **`Lion` optimizer class**: EvoLved Sign Momentum implementation with sign-based updates and optional weight decay
-- **Core operations**: `add`, `multiply`, `subtract`, `sign` bindings exposed for optimizer math
+- **`RMSprop` optimizer class**: Root Mean Square Propagation with adaptive learning rates based on moving averages of squared gradients
+- **Core operations**: `add`, `multiply`, `subtract`, `sign`, `square`, `sqrt`, `divide` bindings exposed for optimizer math
 - **API structure**: Matches Python MLX API for optimizer initialization and configuration
 - **Type safety**: Full TypeScript types and interfaces
-- **Validation**: Parameter validation (e.g., Nesterov requirements)
+- **Validation**: Parameter validation (e.g., Nesterov requirements, RMSprop alpha/epsilon)
 - **State management**: Proper state initialization and tracking
-- **Tests**: Unit tests for SGD and Lion constructors, validation, and state management
+- **Tests**: Unit tests for SGD, Lion, and RMSprop constructors, validation, and state management
 
 ### ⚠️ Partially Implemented
 
@@ -126,6 +127,39 @@ Where:
 - Recommended learning rates are typically 3–10× smaller than AdamW
 - Weight decay should be scaled up proportionally to maintain `lr * weightDecay`
 
+### `RMSprop` (Root Mean Square Propagation)
+
+**Constructor Options:**
+```typescript
+interface RMSpropOptions {
+  learningRate: number | Scheduler;
+  alpha?: number;   // Smoothing constant (default: 0.99)
+  eps?: number;     // Numerical stability term (default: 1e-8)
+}
+```
+
+**Update Formula:**
+```
+v_{t+1} = α * v_t + (1 - α) * g_t²
+w_{t+1} = w_t - λ * g_t / (√v_{t+1} + ε)
+```
+
+Where:
+- `λ` is the learning rate
+- `α` is the smoothing constant for the moving average
+- `v_t` is the moving average of squared gradients
+- `ε` is added to the denominator for numerical stability
+
+**Validation:**
+- `alpha` must be >= 0
+- `eps` must be > 0
+- Throws error if validation fails
+
+**Notes:**
+- RMSprop adapts the learning rate for each parameter based on the magnitude of recent gradients
+- Good default choice for RNNs and other recurrent architectures
+- Reference: Tieleman & Hinton (2012), Lecture 6.5-rmsprop
+
 ## Architecture
 
 The optimizer implementation follows the Python MLX design:
@@ -152,41 +186,30 @@ Current tests cover:
 
 ## Next Steps
 
-To complete the SGD implementation:
+To further improve optimizer functionality:
 
-1. **Add remaining core operations** to `node/src/core/ops.ts`:
-   ```typescript
-   export function divide(a: MLXArray, b: MLXArray, options?: BinaryOpOptions): MLXArray
-   export function sqrt(a: MLXArray, options?: UnaryOpOptions): MLXArray
-   export function square(a: MLXArray, options?: UnaryOpOptions): MLXArray
-   export function rsqrt(a: MLXArray, options?: UnaryOpOptions): MLXArray
-   export function power(a: MLXArray, b: MLXArray | number, options?: BinaryOpOptions): MLXArray
-   ```
+1. ✅ **Core operations** - COMPLETED:
+   - `divide`, `sqrt`, `square`, `rsqrt`, `power` are now available
+   - Scalar-array arithmetic is supported
 
-2. **Add scalar-array arithmetic support**:
-   - Allow operations like `multiply(number, MLXArray)`
-   - Support broadcasting of scalars
+2. ⚠️ **Complete SGD.applySingle()** implementation:
+   - Requires `astype()` method for dtype conversion
+   - All other required operations are available
 
-3. **Implement `astype()` method** on `MLXArray`:
-   ```typescript
-   class MLXArray {
-     astype(dtype: DType): MLXArray
-   }
-   ```
+3. ⚠️ **Complete Adam.applySingle()** implementation:
+   - Requires `astype()` and proper scalar construction
+   - Most other required operations are available
 
 4. **Add proper scalar construction**:
    - Support `array(5)` to create a scalar array
    - Or add `scalar(value, dtype)` helper function
 
-5. **Complete `applySingle()` implementation** once the above are available
+5. **Add integration tests** that verify gradient application with actual arrays
 
-6. **Add integration tests** that verify gradient application with actual arrays
-
-7. **Implement other optimizers**:
-   - Adam
-   - AdamW  
-   - RMSprop
+6. **Implement other optimizers**:
+   - AdamW
    - Adagrad
+   - Adadelta
    - etc.
 
 ## References
