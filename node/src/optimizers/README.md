@@ -10,12 +10,13 @@ This module provides optimizer implementations for training neural networks with
 - **`SGD` optimizer class**: Stochastic Gradient Descent with momentum, weight decay, dampening, and Nesterov momentum support
 - **`Lion` optimizer class**: EvoLved Sign Momentum implementation with sign-based updates and optional weight decay
 - **`RMSprop` optimizer class**: Root Mean Square Propagation with adaptive learning rates based on moving averages of squared gradients
+- **`MultiOptimizer` class**: Wraps multiple optimizers with filters to apply different optimizers to different parameters
 - **Core operations**: `add`, `multiply`, `subtract`, `sign`, `square`, `sqrt`, `divide` bindings exposed for optimizer math
 - **API structure**: Matches Python MLX API for optimizer initialization and configuration
 - **Type safety**: Full TypeScript types and interfaces
-- **Validation**: Parameter validation (e.g., Nesterov requirements, RMSprop alpha/epsilon)
+- **Validation**: Parameter validation (e.g., Nesterov requirements, RMSprop alpha/epsilon, MultiOptimizer filter count)
 - **State management**: Proper state initialization and tracking
-- **Tests**: Unit tests for SGD, Lion, and RMSprop constructors, validation, and state management
+- **Tests**: Unit tests for SGD, Lion, RMSprop, and MultiOptimizer with comprehensive coverage
 
 ### ⚠️ Partially Implemented
 
@@ -159,6 +160,67 @@ Where:
 - RMSprop adapts the learning rate for each parameter based on the magnitude of recent gradients
 - Good default choice for RNNs and other recurrent architectures
 - Reference: Tieleman & Hinton (2012), Lecture 6.5-rmsprop
+
+### `MultiOptimizer` (Multiple Optimizer Wrapper)
+
+**Constructor Options:**
+```typescript
+interface MultiOptimizerOptions {
+  optimizers: Optimizer[];     // List of optimizers to delegate to
+  filters?: OptimizerFilter[]; // List of predicates (length must be optimizers.length - 1)
+}
+
+type OptimizerFilter = (path: string, parameter: any) => boolean;
+```
+
+**How It Works:**
+The `MultiOptimizer` wraps multiple optimizers with corresponding filters to apply different optimizers to different parameters. Each filter is a predicate that takes the parameter path and value, returning `true` if that parameter should use the corresponding optimizer. The last optimizer in the list is a fallback that receives all remaining parameters.
+
+**Example:**
+```typescript
+import { MultiOptimizer, Adam, SGD } from 'mlx/optimizers';
+
+// Use Adam for 'weight' parameters, SGD for everything else
+const multiOpt = new MultiOptimizer({
+  optimizers: [
+    new Adam({ learningRate: 0.001 }),
+    new SGD({ learningRate: 0.01 })
+  ],
+  filters: [
+    (path, _param) => path.includes('weight')
+  ]
+});
+
+// More complex example with 3 optimizers
+const complexOpt = new MultiOptimizer({
+  optimizers: [
+    new Adam({ learningRate: 0.001 }),    // For weights
+    new Lion({ learningRate: 0.0001 }),   // For biases
+    new SGD({ learningRate: 0.01 })       // For everything else (fallback)
+  ],
+  filters: [
+    (path) => path.includes('weight'),
+    (path) => path.includes('bias')
+  ]
+});
+```
+
+**Features:**
+- **Filter-based routing**: Parameters are automatically split among optimizers based on filters
+- **Automatic fallback**: Last optimizer receives all unmatched parameters
+- **State management**: Aggregates state from all sub-optimizers
+- **Learning rate propagation**: Setting `learningRate` updates all sub-optimizers
+- **Validation**: Ensures correct number of filters (must be `optimizers.length - 1`)
+
+**Validation:**
+- Number of filters must equal `optimizers.length - 1`
+- Throws error if filter count is incorrect
+- At least one optimizer is required
+
+**Use Cases:**
+- Apply different optimization strategies to different layer types
+- Use aggressive optimizers for fast-changing parameters, conservative ones for stable parameters
+- Separate treatment for embeddings vs. main network layers
 
 ## Architecture
 
