@@ -459,7 +459,7 @@ export class Adam extends Optimizer {
 export interface AdamaxOptions {
   /** The learning rate */
   learningRate: SchedulableParam;
-  /** The coefficients (β₁, β₂) used for computing running averages of gradient and its square (default: [0.9, 0.999]) */
+  /** The coefficients (β₁, β₂) used for computing running averages of gradient and the exponentially weighted infinity norm (default: [0.9, 0.999]) */
   betas?: [number, number];
   /** The term ε added to the denominator to improve numerical stability (default: 1e-8) */
   eps?: number;
