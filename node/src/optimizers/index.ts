@@ -685,7 +685,7 @@ export class Muon extends Optimizer {
     const arr = Y.toTypedArray();
     let normSquared = 0;
     for (let i = 0; i < arr.length; i++) {
-      const val = typeof arr[i] === 'bigint' ? Number(arr[i]) : arr[i];
+      const val = typeof arr[i] === 'bigint' ? Number(arr[i]) : Number(arr[i]);
       normSquared += val * val;
     }
     const norm = Math.sqrt(normSquared);
