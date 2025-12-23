@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { SGD, Adam, Lion, RMSprop, Optimizer } from '../src/optimizers';
+import { SGD, Adam, Lion, RMSprop, Optimizer, MultiOptimizer } from '../src/optimizers';
 import { zeros } from '../src/core/array';
 
 describe('mlx.optimizers', () => {
@@ -341,6 +341,213 @@ describe('mlx.optimizers', () => {
       optimizer.learningRate = 0.001;
       // Note: This test is placeholder since we can't properly set scalar values yet
       assert.ok(optimizer.learningRate);
+    });
+  });
+
+  describe('MultiOptimizer', () => {
+    it('should create MultiOptimizer with single optimizer', () => {
+      const opt = new SGD({ learningRate: 0.01 });
+      const multiOpt = new MultiOptimizer({
+        optimizers: [opt],
+      });
+      assert.ok(multiOpt instanceof Optimizer);
+      assert.ok(multiOpt instanceof MultiOptimizer);
+      assert.strictEqual(multiOpt.optimizers.length, 1);
+      assert.strictEqual(multiOpt.filters.length, 1);
+    });
+
+    it('should create MultiOptimizer with multiple optimizers and filters', () => {
+      const opt1 = new Adam({ learningRate: 0.001 });
+      const opt2 = new SGD({ learningRate: 0.01 });
+      const filter1 = (path: string) => path.includes('weight');
+
+      const multiOpt = new MultiOptimizer({
+        optimizers: [opt1, opt2],
+        filters: [filter1],
+      });
+
+      assert.strictEqual(multiOpt.optimizers.length, 2);
+      assert.strictEqual(multiOpt.filters.length, 2); // filter1 + catch-all
+    });
+
+    it('should throw error if wrong number of filters provided', () => {
+      const opt1 = new Adam({ learningRate: 0.001 });
+      const opt2 = new SGD({ learningRate: 0.01 });
+      const opt3 = new Lion({ learningRate: 0.0001 });
+
+      // Need 2 filters for 3 optimizers
+      assert.throws(
+        () =>
+          new MultiOptimizer({
+            optimizers: [opt1, opt2, opt3],
+            filters: [(path) => path.includes('weight')], // Only 1 filter
+          }),
+        /Given 1 filters but 2 needed/
+      );
+    });
+
+    it('should throw error if too many filters provided', () => {
+      const opt1 = new Adam({ learningRate: 0.001 });
+      const opt2 = new SGD({ learningRate: 0.01 });
+
+      // Need 1 filter for 2 optimizers
+      assert.throws(
+        () =>
+          new MultiOptimizer({
+            optimizers: [opt1, opt2],
+            filters: [
+              (path) => path.includes('weight'),
+              (path) => path.includes('bias'), // Too many filters
+            ],
+          }),
+        /Given 2 filters but 1 needed/
+      );
+    });
+
+    it('should initialize state for all sub-optimizers', () => {
+      const opt1 = new Adam({ learningRate: 0.001 });
+      const opt2 = new SGD({ learningRate: 0.01, momentum: 0.9 });
+
+      const multiOpt = new MultiOptimizer({
+        optimizers: [opt1, opt2],
+        filters: [(path) => path.includes('weight')],
+      });
+
+      const params = {
+        weight: zeros([3]),
+        bias: zeros([1]),
+      };
+
+      multiOpt.init(params);
+
+      // Check that both optimizers were initialized
+      const state = multiOpt.state;
+      assert.ok(state.states);
+      assert.strictEqual(state.states.length, 2);
+
+      // First optimizer (Adam) should have weight
+      assert.ok(state.states[0].weight);
+      assert.ok('m' in state.states[0].weight);
+      assert.ok('v' in state.states[0].weight);
+
+      // Second optimizer (SGD) should have bias
+      assert.ok(state.states[1].bias);
+      assert.ok('v' in state.states[1].bias);
+    });
+
+    it('should get learning rate from first optimizer', () => {
+      const opt1 = new Adam({ learningRate: 0.001 });
+      const opt2 = new SGD({ learningRate: 0.01 });
+
+      const multiOpt = new MultiOptimizer({
+        optimizers: [opt1, opt2],
+        filters: [(path) => path.includes('weight')],
+      });
+
+      const lr = multiOpt.learningRate;
+      assert.ok(lr);
+      // Should get learning rate from first optimizer
+      assert.ok(lr.toTypedArray !== undefined);
+    });
+
+    it('should set learning rate for all sub-optimizers', () => {
+      const opt1 = new Adam({ learningRate: 0.001 });
+      const opt2 = new SGD({ learningRate: 0.01 });
+
+      const multiOpt = new MultiOptimizer({
+        optimizers: [opt1, opt2],
+        filters: [(path) => path.includes('weight')],
+      });
+
+      multiOpt.learningRate = 0.0001;
+
+      // Both optimizers should have updated learning rate
+      assert.ok(opt1.learningRate);
+      assert.ok(opt2.learningRate);
+    });
+
+    it('should allow getting and setting state', () => {
+      const opt1 = new Adam({ learningRate: 0.001 });
+      const opt2 = new SGD({ learningRate: 0.01 });
+
+      const multiOpt = new MultiOptimizer({
+        optimizers: [opt1, opt2],
+        filters: [(path) => path.includes('weight')],
+      });
+
+      const params = {
+        weight: zeros([3]),
+        bias: zeros([1]),
+      };
+
+      multiOpt.init(params);
+      const state = multiOpt.state;
+
+      assert.ok(state.states);
+      assert.strictEqual(state.states.length, 2);
+
+      // Setting state should work
+      multiOpt.state = state;
+      const newState = multiOpt.state;
+      assert.ok(newState.states);
+      assert.strictEqual(newState.states.length, 2);
+    });
+
+    it('should throw error when setting invalid state', () => {
+      const opt1 = new Adam({ learningRate: 0.001 });
+      const opt2 = new SGD({ learningRate: 0.01 });
+
+      const multiOpt = new MultiOptimizer({
+        optimizers: [opt1, opt2],
+        filters: [(path) => path.includes('weight')],
+      });
+
+      // Missing states
+      assert.throws(() => {
+        multiOpt.state = { notStates: [] };
+      }, /Invalid state provided/);
+
+      // Wrong number of states
+      assert.throws(() => {
+        multiOpt.state = { states: [{}] }; // Only 1 state, need 2
+      }, /Invalid state provided/);
+    });
+
+    it('should split parameters correctly based on filters', () => {
+      const opt1 = new Adam({ learningRate: 0.001 });
+      const opt2 = new Lion({ learningRate: 0.0001 });
+      const opt3 = new SGD({ learningRate: 0.01 });
+
+      // First optimizer gets 'weight' params, second gets 'bias', third is fallback
+      const multiOpt = new MultiOptimizer({
+        optimizers: [opt1, opt2, opt3],
+        filters: [
+          (path) => path.includes('weight'),
+          (path) => path.includes('bias'),
+        ],
+      });
+
+      const params = {
+        layer1: {
+          weight: zeros([3, 4]),
+          bias: zeros([4]),
+        },
+        layer2: {
+          weight: zeros([4, 2]),
+          bias: zeros([2]),
+        },
+        other: zeros([5]),
+      };
+
+      multiOpt.init(params);
+      const state = multiOpt.state;
+
+      // Check that parameters were split correctly
+      assert.ok(state.states[0].layer1?.weight); // Adam gets weights
+      assert.ok(state.states[0].layer2?.weight);
+      assert.ok(state.states[1].layer1?.bias); // Lion gets biases
+      assert.ok(state.states[1].layer2?.bias);
+      assert.ok(state.states[2].other); // SGD gets everything else
     });
   });
 });
