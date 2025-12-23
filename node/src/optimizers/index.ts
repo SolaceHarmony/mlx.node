@@ -495,7 +495,8 @@ export class Adamax extends Adam {
       eps = 1e-8
     } = options;
 
-    // Call parent constructor with biasCorrection disabled (Adamax doesn't use bias correction)
+    // Call parent constructor with biasCorrection disabled
+    // Following the original paper, Adamax omits bias correction
     super({ learningRate, betas, eps, biasCorrection: false });
 
     if (eps < 0.0) {
