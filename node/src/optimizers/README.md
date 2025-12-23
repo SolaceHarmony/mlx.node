@@ -10,12 +10,13 @@ This module provides optimizer implementations for training neural networks with
 - **`SGD` optimizer class**: Stochastic Gradient Descent with momentum, weight decay, dampening, and Nesterov momentum support
 - **`Lion` optimizer class**: EvoLved Sign Momentum implementation with sign-based updates and optional weight decay
 - **`RMSprop` optimizer class**: Root Mean Square Propagation with adaptive learning rates based on moving averages of squared gradients
-- **Core operations**: `add`, `multiply`, `subtract`, `sign`, `square`, `sqrt`, `divide` bindings exposed for optimizer math
+- **`Muon` optimizer class**: MomentUm Orthogonalized by Newton-schulz, optimized for 2D+ parameters with orthogonalization
+- **Core operations**: `add`, `multiply`, `subtract`, `sign`, `square`, `sqrt`, `divide`, `matmul`, `reshape`, `transpose` bindings exposed for optimizer math
 - **API structure**: Matches Python MLX API for optimizer initialization and configuration
 - **Type safety**: Full TypeScript types and interfaces
 - **Validation**: Parameter validation (e.g., Nesterov requirements, RMSprop alpha/epsilon)
 - **State management**: Proper state initialization and tracking
-- **Tests**: Unit tests for SGD, Lion, and RMSprop constructors, validation, and state management
+- **Tests**: Unit tests for SGD, Lion, RMSprop, and Muon constructors, validation, and state management
 
 ### ⚠️ Partially Implemented
 
@@ -159,6 +160,47 @@ Where:
 - RMSprop adapts the learning rate for each parameter based on the magnitude of recent gradients
 - Good default choice for RNNs and other recurrent architectures
 - Reference: Tieleman & Hinton (2012), Lecture 6.5-rmsprop
+
+### `Muon` (MomentUm Orthogonalized by Newton-schulz)
+
+**Constructor Options:**
+```typescript
+interface MuonOptions {
+  learningRate: number | Scheduler;
+  momentum?: number;        // Momentum strength (default: 0.95)
+  weightDecay?: number;     // L2 penalty (default: 0.01)
+  nesterov?: boolean;       // Enable Nesterov momentum (default: true)
+  nsSteps?: number;         // Newton-Schulz iteration steps (default: 5)
+}
+```
+
+**Update Formula:**
+```
+v_{t+1} = μ * v_t + (1 - μ) * g_t
+update = (1 - μ) * g_t + μ * v_{t+1}  [if nesterov]
+update = v_{t+1}                        [otherwise]
+
+For 2D+ parameters:
+  update = Orthogonalize(update) via Newton-Schulz
+  lr_scaled = lr * sqrt(max(1, rows/cols))
+  w_{t+1} = w_t - lr_scaled * update
+
+For 1D parameters:
+  w_{t+1} = w_t - lr * update
+```
+
+Where:
+- `μ` is the momentum strength
+- `lr` is the learning rate
+- Newton-Schulz orthogonalization ensures updates lie in a well-conditioned space
+
+**Notes:**
+- **Optimized for hidden layers**: Muon excels at optimizing 2D+ parameters (weight matrices, conv filters)
+- **Not recommended for**: Embedding layers, final FC layers, or 0D/1D parameters (use AdamW for those)
+- **4D conv filters**: Works by flattening the last dimensions to 2D
+- **Orthogonalization**: Uses 5 Newton-Schulz iterations by default to orthogonalize updates
+- Provides better conditioning than standard momentum for large weight matrices
+- Reference: [Muon: An optimizer for hidden layers in neural networks](https://kellerjordan.github.io/posts/muon/)
 
 ## Architecture
 
