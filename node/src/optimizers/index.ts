@@ -500,6 +500,16 @@ export class Lion extends Optimizer {
 }
 
 /**
+ * Adagrad Optimizer Options
+ */
+export interface AdagradOptions {
+  /** The learning rate */
+  learningRate: SchedulableParam;
+  /** The term ε added to the denominator to improve numerical stability (default: 1e-8) */
+  eps?: number;
+}
+
+/**
  * RMSprop Optimizer Options
  */
 export interface RMSpropOptions {
@@ -509,6 +519,78 @@ export interface RMSpropOptions {
   alpha?: number;
   /** The term ε added to the denominator to improve numerical stability (default: 1e-8) */
   eps?: number;
+}
+
+/**
+ * The Adagrad optimizer.
+ *
+ * Adagrad is an adaptive learning rate optimization algorithm that
+ * accumulates squared gradients to normalize the gradient. Unlike RMSprop,
+ * it does not use a decaying average but accumulates all historical gradients.
+ *
+ * Reference: Duchi, J., Hazan, E. and Singer, Y., 2011. Adaptive subgradient
+ * methods for online learning and stochastic optimization. JMLR 2011.
+ *
+ * The algorithm updates parameters as follows:
+ *
+ *   v_{t+1} = v_t + g_t²
+ *   w_{t+1} = w_t - λ * g_t / (√v_{t+1} + ε)
+ *
+ * where λ is the learning rate, g_t is the gradient, v_t is the accumulated
+ * sum of squared gradients, and ε is a small constant for numerical stability.
+ *
+ * @example
+ * ```typescript
+ * const optimizer = new Adagrad({ learningRate: 0.01 });
+ * // ... during training:
+ * // const updatedParams = optimizer.applyGradients(gradients, parameters);
+ * ```
+ */
+export class Adagrad extends Optimizer {
+  eps: number;
+
+  constructor(options: AdagradOptions) {
+    super();
+
+    const { learningRate, eps = 1e-8 } = options;
+
+    if (eps <= 0.0) {
+      throw new Error(`Adagrad epsilon should be >0, ${eps} was provided instead`);
+    }
+
+    this._maybeSchedule('learning_rate', learningRate);
+    this.eps = eps;
+  }
+
+  protected initSingle(parameter: MLXArray, state: Record<string, any>): void {
+    // Initialize accumulated squared gradients with zerosLike
+    state.v = zerosLike(parameter);
+  }
+
+  protected applySingle(
+    gradient: MLXArray,
+    parameter: MLXArray,
+    state: Record<string, any>
+  ): MLXArray {
+    const lr = this.learningRate;
+    const eps = this.eps;
+
+    // Get accumulated squared gradients from state
+    let v = state.v;
+
+    // Accumulate squared gradients: v = v + g²
+    const gradSquared = square(gradient);
+    v = add(v, gradSquared);
+
+    // Store updated accumulated squared gradients
+    state.v = v;
+
+    // Compute update: w = w - lr * g / (√v + ε)
+    const sqrtV = sqrt(v);
+    const denominator = add(sqrtV, eps);
+    const update = divide(gradient, denominator);
+    return subtract(parameter, multiply(lr, update));
+  }
 }
 
 /**
@@ -594,5 +676,6 @@ export default {
   SGD,
   Adam,
   Lion,
+  Adagrad,
   RMSprop,
 };
