@@ -99,6 +99,7 @@ The Node.js optimizer implementation follows the same design as Python MLX:
 | `SGD` gradient updates | ✅ | ⚠️ | Blocked on astype |
 | `Lion` optimizer | ✅ | ✅ | Complete |
 | `RMSprop` optimizer | ✅ | ✅ | Complete |
+| `Muon` optimizer | ✅ | ✅ | Complete |
 | Other optimizers (Adam, AdamW, Adagrad, etc.) | ✅ | ⚠️ | Partial (Adam structure exists) |
 
 ## Why Not a C++ Binding?

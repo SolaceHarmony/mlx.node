@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { SGD, Adam, Lion, Adagrad, RMSprop, Optimizer } from '../src/optimizers';
+import { SGD, Adam, Lion, Adagrad, RMSprop, Muon, Optimizer } from '../src/optimizers';
 import { zeros } from '../src/core/array';
 
 describe('mlx.optimizers', () => {
@@ -343,7 +343,6 @@ describe('mlx.optimizers', () => {
       assert.ok(optimizer.learningRate);
     });
   });
-
   describe('Adagrad', () => {
     it('should create Adagrad optimizer with learning rate', () => {
       const optimizer = new Adagrad({ learningRate: 0.01 });
@@ -413,5 +412,95 @@ describe('mlx.optimizers', () => {
       // Note: This test is placeholder since we can't properly set scalar values yet
       assert.ok(optimizer.learningRate);
     });
+  });
+
+  describe('Muon', () => {
+    it('should create Muon optimizer with learning rate', () => {
+      const optimizer = new Muon({ learningRate: 0.01 });
+      assert.ok(optimizer instanceof Optimizer);
+      assert.ok(optimizer instanceof Muon);
+      assert.strictEqual(optimizer.momentum, 0.95);
+      assert.strictEqual(optimizer.weightDecay, 0.01);
+      assert.strictEqual(optimizer.nesterov, true);
+      assert.strictEqual(optimizer.nsSteps, 5);
+    });
+
+    it('should create Muon optimizer with custom momentum', () => {
+      const optimizer = new Muon({
+        learningRate: 0.01,
+        momentum: 0.9
+      });
+      assert.strictEqual(optimizer.momentum, 0.9);
+    });
+
+    it('should create Muon optimizer with custom weight decay', () => {
+      const optimizer = new Muon({
+        learningRate: 0.01,
+        weightDecay: 0.001
+      });
+      assert.strictEqual(optimizer.weightDecay, 0.001);
+    });
+
+    it('should create Muon optimizer without nesterov', () => {
+      const optimizer = new Muon({
+        learningRate: 0.01,
+        nesterov: false
+      });
+      assert.strictEqual(optimizer.nesterov, false);
+    });
+
+    it('should create Muon optimizer with custom ns_steps', () => {
+      const optimizer = new Muon({
+        learningRate: 0.01,
+        nsSteps: 10
+      });
+      assert.strictEqual(optimizer.nsSteps, 10);
+    });
+
+    it('should have learning rate in state', () => {
+      const optimizer = new Muon({ learningRate: 0.01 });
+      const lr = optimizer.learningRate;
+      assert.ok(lr);
+      // Check that it's an MLXArray
+      assert.ok(lr.toTypedArray !== undefined);
+    });
+
+    it('should initialize state for parameters', () => {
+      const optimizer = new Muon({ learningRate: 0.01 });
+      const params = {
+        weight: zeros([3, 3]),
+        bias: zeros([1])
+      };
+
+      optimizer.init(params);
+
+      // Check that state was initialized
+      assert.ok(optimizer.state);
+      assert.ok('step' in optimizer.state);
+      assert.ok('learning_rate' in optimizer.state);
+      assert.ok('weight' in optimizer.state);
+      assert.ok('bias' in optimizer.state);
+
+      // Check that velocity was initialized
+      assert.ok('v' in optimizer.state.weight);
+      assert.ok('v' in optimizer.state.bias);
+    });
+
+    it('should track step count', () => {
+      const optimizer = new Muon({ learningRate: 0.01 });
+      const step = optimizer.step;
+      assert.ok(step);
+      assert.strictEqual(step.toTypedArray()[0], 0);
+    });
+
+    it('should allow setting learning rate', () => {
+      const optimizer = new Muon({ learningRate: 0.01 });
+      optimizer.learningRate = 0.001;
+      // Note: This test is placeholder since we can't properly set scalar values yet
+      assert.ok(optimizer.learningRate);
+    });
+
+    // Note: applyGradients tests require actual gradient application which depends
+    // on the Newton-Schulz implementation working correctly with real data
   });
 });

@@ -460,3 +460,31 @@ export function arange(
   const handle = addon.arange(...args);
   return MLXArray.fromHandle(handle);
 }
+
+/**
+ * Matrix multiplication.
+ * 
+ * Performs matrix multiplication between two arrays.
+ * 
+ * @param a - The first input array
+ * @param b - The second input array
+ * @param options - Optional stream configuration
+ * @returns The result of the matrix multiplication
+ * 
+ * @example
+ * ```typescript
+ * const a = mx.array([[1, 2], [3, 4]]);
+ * const b = mx.array([[5, 6], [7, 8]]);
+ * const result = mx.matmul(a, b);
+ * ```
+ */
+export function matmul(
+  a: MLXArray,
+  b: MLXArray,
+  options?: BinaryOpOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a), toNativeHandle(b)];
+  appendStreamArg(args, options?.stream);
+  const handle = addon.matmul(...args);
+  return MLXArray.fromHandle(handle);
+}
