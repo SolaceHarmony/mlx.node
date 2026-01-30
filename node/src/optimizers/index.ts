@@ -495,13 +495,13 @@ export class Adamax extends Adam {
       eps = 1e-8
     } = options;
 
-    // Call parent constructor with biasCorrection disabled
-    // Following the original paper, Adamax omits bias correction
-    super({ learningRate, betas, eps, biasCorrection: false });
-
     if (eps < 0.0) {
       throw new Error(`Epsilon value should be >=0, ${eps} was provided instead`);
     }
+
+    // Call parent constructor with biasCorrection disabled
+    // Following the original paper, Adamax omits bias correction
+    super({ learningRate, betas, eps, biasCorrection: false });
   }
 
   protected initSingle(parameter: MLXArray, state: Record<string, any>): void {
