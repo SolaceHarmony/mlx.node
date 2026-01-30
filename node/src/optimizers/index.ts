@@ -590,10 +590,11 @@ export class RMSprop extends Optimizer {
 }
 
 /**
- * Filter function type - takes the full path and the parameter itself
- * and returns true if it should be considered for the optimizer
+ * Filter function type - takes the full path and the associated leaf value
+ * (e.g., a parameter or its gradient) and returns true if it should be
+ * considered for the optimizer.
  */
-export type OptimizerFilter = (path: string, parameter: any) => boolean;
+export type OptimizerFilter = (path: string, value: any) => boolean;
 
 /**
  * MultiOptimizer Options
