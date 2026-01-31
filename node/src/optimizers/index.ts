@@ -6,7 +6,7 @@
  */
 
 import MLXArray, { zeros, zerosLike } from '../core/array';
-import { add, multiply, subtract, sign, square, sqrt, divide, matmul, reshape, transpose } from '../core/ops';
+import { add, multiply, subtract, sign, square, sqrt, divide, abs, maximum, matmul, reshape, transpose } from '../core/ops';
 import { treeMap } from '../utils';
 
 /**
@@ -453,6 +453,92 @@ export class Adam extends Optimizer {
   }
 }
 
+/**
+ * Adamax Optimizer Options
+ */
+export interface AdamaxOptions {
+  /** The learning rate */
+  learningRate: SchedulableParam;
+  /** The coefficients (β₁, β₂) used for computing running averages of gradient and the exponentially weighted infinity norm (default: [0.9, 0.999]) */
+  betas?: [number, number];
+  /** The term ε added to the denominator to improve numerical stability (default: 1e-8) */
+  eps?: number;
+}
+
+/**
+ * The Adamax optimizer, a variant of Adam based on the infinity norm.
+ *
+ * Implements the Adamax algorithm from "Adam: A Method for Stochastic Optimization" (Kingma & Ba, 2015).
+ *
+ * The algorithm updates parameters as follows:
+ *
+ *   m_{t+1} = β₁ * m_t + (1 - β₁) * g_t
+ *   v_{t+1} = max(β₂ * v_t, |g_t|)
+ *   w_{t+1} = w_t - λ * m_{t+1} / (v_{t+1} + ε)
+ *
+ * where λ is the learning rate, m_t is the first moment estimate,
+ * v_t is the exponentially weighted infinity norm, g_t is the gradient,
+ * and ε is a small constant for numerical stability.
+ *
+ * @example
+ * ```typescript
+ * const optimizer = new Adamax({ learningRate: 0.002 });
+ * // ... during training:
+ * // const updatedParams = optimizer.applyGradients(gradients, parameters);
+ * ```
+ */
+export class Adamax extends Adam {
+  constructor(options: AdamaxOptions) {
+    const {
+      learningRate,
+      betas = [0.9, 0.999],
+      eps = 1e-8
+    } = options;
+
+    if (eps < 0.0) {
+      throw new Error(`Epsilon value should be >=0, ${eps} was provided instead`);
+    }
+
+    // Call parent constructor with biasCorrection disabled
+    // Following the original paper, Adamax omits bias correction
+    super({ learningRate, betas, eps, biasCorrection: false });
+  }
+
+  protected initSingle(parameter: MLXArray, state: Record<string, any>): void {
+    // Initialize first moment (m) and exponentially weighted infinity norm (v) with zerosLike
+    state.m = zerosLike(parameter);
+    state.v = zerosLike(parameter);
+  }
+
+  protected applySingle(
+    gradient: MLXArray,
+    parameter: MLXArray,
+    state: Record<string, any>
+  ): MLXArray {
+    const lr = this.learningRate;
+    const [b1, b2] = this.betas;
+    const eps = this.eps;
+
+    // Get moments from state
+    let m = state.m;
+    let v = state.v;
+
+    // Update biased first moment estimate: m = β₁ * m + (1 - β₁) * g
+    m = add(multiply(b1, m), multiply(1 - b1, gradient));
+
+    // Update exponentially weighted infinity norm: v = max(β₂ * v, |g|)
+    v = maximum(multiply(b2, v), abs(gradient));
+
+    // Store updated moments
+    state.m = m;
+    state.v = v;
+
+    // Compute update: w = w - lr * m / (v + ε)
+    const update = divide(multiply(lr, m), add(v, eps));
+    return subtract(parameter, update);
+  }
+}
+
 export interface LionOptions {
   learningRate: SchedulableParam;
   betas?: [number, number];
@@ -865,6 +951,7 @@ export default {
   Optimizer,
   SGD,
   Adam,
+  Adamax,
   Lion,
   Adagrad,
   RMSprop,
