@@ -48,13 +48,13 @@ The Stochastic Gradient Descent optimizer:
 - **State initialization**: `initSingle()` creates velocity state
 - **Gradient application**: `applySingle()` has placeholder (requires core ops)
 
-#### ✅ `MultiOptimizer` (Fully Implemented)
+#### ✅ `MultiOptimizer` (Implemented)
 Wraps multiple optimizers with filters to apply different optimizers to different parameters:
 - **Constructor**: Takes a list of optimizers and filters
 - **Filter-based routing**: Uses predicates to split parameters among optimizers
 - **State management**: Aggregates state from all sub-optimizers
 - **Learning rate propagation**: Setting learning rate updates all sub-optimizers
-- **Comprehensive tests**: Full test coverage for all functionality
+- **Current tests**: Cover constructor, filter routing, and state management; additional tests are planned for `applyGradients` routing and merging behavior
 
 **Implementation Details:**
 ```typescript
