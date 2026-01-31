@@ -696,11 +696,15 @@ export class MultiOptimizer extends Optimizer {
     gradients: Record<string, any>,
     parameters: Record<string, any>
   ): Record<string, any> {
-    const splits = this._splitDictionary(gradients);
+    const gradientSplits = this._splitDictionary(gradients);
+    const parameterSplits = this._splitDictionary(parameters);
     let result: Record<string, any> = {};
 
     for (let i = 0; i < this.optimizers.length; i++) {
-      const updated = this.optimizers[i].applyGradients(splits[i], parameters);
+      const updated = this.optimizers[i].applyGradients(
+        gradientSplits[i],
+        parameterSplits[i]
+      );
       result = treeMerge(result, updated) as Record<string, any>;
     }
 
