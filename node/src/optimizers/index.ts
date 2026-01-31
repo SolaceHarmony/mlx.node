@@ -6,7 +6,7 @@
  */
 
 import MLXArray, { zeros, zerosLike } from '../core/array';
-import { add, multiply, subtract, sign, square, sqrt, divide, abs, maximum } from '../core/ops';
+import { add, multiply, subtract, sign, square, sqrt, divide, abs, maximum, matmul, reshape, transpose } from '../core/ops';
 import { treeMap } from '../utils';
 
 /**
@@ -586,6 +586,16 @@ export class Lion extends Optimizer {
 }
 
 /**
+ * Adagrad Optimizer Options
+ */
+export interface AdagradOptions {
+  /** The learning rate */
+  learningRate: SchedulableParam;
+  /** The term ε added to the denominator to improve numerical stability (default: 1e-8) */
+  eps?: number;
+}
+
+/**
  * RMSprop Optimizer Options
  */
 export interface RMSpropOptions {
@@ -595,6 +605,78 @@ export interface RMSpropOptions {
   alpha?: number;
   /** The term ε added to the denominator to improve numerical stability (default: 1e-8) */
   eps?: number;
+}
+
+/**
+ * The Adagrad optimizer.
+ *
+ * Adagrad is an adaptive learning rate optimization algorithm that
+ * accumulates squared gradients to normalize the gradient. Unlike RMSprop,
+ * it does not use a decaying average but accumulates all historical gradients.
+ *
+ * Reference: Duchi, J., Hazan, E. and Singer, Y., 2011. Adaptive subgradient
+ * methods for online learning and stochastic optimization. JMLR 2011.
+ *
+ * The algorithm updates parameters as follows:
+ *
+ *   v_{t+1} = v_t + g_t²
+ *   w_{t+1} = w_t - λ * g_t / (√v_{t+1} + ε)
+ *
+ * where λ is the learning rate, g_t is the gradient, v_t is the accumulated
+ * sum of squared gradients, and ε is a small constant for numerical stability.
+ *
+ * @example
+ * ```typescript
+ * const optimizer = new Adagrad({ learningRate: 0.01 });
+ * // ... during training:
+ * // const updatedParams = optimizer.applyGradients(gradients, parameters);
+ * ```
+ */
+export class Adagrad extends Optimizer {
+  eps: number;
+
+  constructor(options: AdagradOptions) {
+    super();
+
+    const { learningRate, eps = 1e-8 } = options;
+
+    if (eps <= 0.0) {
+      throw new Error(`Adagrad epsilon should be >0, ${eps} was provided instead`);
+    }
+
+    this._maybeSchedule('learning_rate', learningRate);
+    this.eps = eps;
+  }
+
+  protected initSingle(parameter: MLXArray, state: Record<string, any>): void {
+    // Initialize accumulated squared gradients with zerosLike
+    state.v = zerosLike(parameter);
+  }
+
+  protected applySingle(
+    gradient: MLXArray,
+    parameter: MLXArray,
+    state: Record<string, any>
+  ): MLXArray {
+    const lr = this.learningRate;
+    const eps = this.eps;
+
+    // Get accumulated squared gradients from state
+    let v = state.v;
+
+    // Accumulate squared gradients: v = v + g²
+    const gradSquared = square(gradient);
+    v = add(v, gradSquared);
+
+    // Store updated accumulated squared gradients
+    state.v = v;
+
+    // Compute update: w = w - lr * g / (√v + ε)
+    const sqrtV = sqrt(v);
+    const denominator = add(sqrtV, eps);
+    const update = divide(gradient, denominator);
+    return subtract(parameter, multiply(lr, update));
+  }
 }
 
 /**
@@ -675,11 +757,203 @@ export class RMSprop extends Optimizer {
   }
 }
 
+/**
+ * Muon Optimizer Options
+ */
+export interface MuonOptions {
+  /** The learning rate */
+  learningRate: SchedulableParam;
+  /** The momentum strength (default: 0.95) */
+  momentum?: number;
+  /** The weight decay (L2 penalty) (default: 0.01) */
+  weightDecay?: number;
+  /** Enables Nesterov momentum (default: true) */
+  nesterov?: boolean;
+  /** Number of Newton-Schulz iteration steps for orthogonalization (default: 5) */
+  nsSteps?: number;
+}
+
+/**
+ * The Muon optimizer.
+ *
+ * Muon (MomentUm Orthogonalized by Newton-schulz) optimizer follows the
+ * original implementation from https://kellerjordan.github.io/posts/muon/
+ *
+ * Note:
+ * - Muon may be sub-optimal for the embedding layer, the final fully
+ *   connected layer, or any 0D/1D parameters. Those should be optimized
+ *   by a different method (e.g., AdamW).
+ * - For 4D convolutional filters, it works by flattening their last
+ *   dimensions.
+ *
+ * @example
+ * ```typescript
+ * const optimizer = new Muon({ learningRate: 0.01, momentum: 0.95, nesterov: true });
+ * // ... during training:
+ * // const updatedParams = optimizer.applyGradients(gradients, parameters);
+ * ```
+ */
+export class Muon extends Optimizer {
+  momentum: number;
+  weightDecay: number;
+  nesterov: boolean;
+  nsSteps: number;
+
+  constructor(options: MuonOptions) {
+    super();
+
+    const {
+      learningRate,
+      momentum = 0.95,
+      weightDecay = 0.01,
+      nesterov = true,
+      nsSteps = 5
+    } = options;
+
+    this._maybeSchedule('learning_rate', learningRate);
+    this.momentum = momentum;
+    this.weightDecay = weightDecay;
+    this.nesterov = nesterov;
+    this.nsSteps = nsSteps;
+  }
+
+  protected initSingle(parameter: MLXArray, state: Record<string, any>): void {
+    // Initialize velocity with zerosLike
+    state.v = zerosLike(parameter);
+  }
+
+  /**
+   * Performs zero-power via Newton-Schulz iteration
+   * @param X - 2D input matrix
+   * @param steps - Number of Newton-Schulz steps
+   * @returns Orthogonalized matrix
+   */
+  private _zeropowerViaNewtonschulz5(X: MLXArray, steps: number): MLXArray {
+    // Constants for Newton-Schulz iteration
+    const a = 3.4445;
+    const b = -4.7750;
+    const c = 2.0315;
+
+    const shape = X.shape;
+    if (shape.length !== 2) {
+      throw new Error(
+        `Expected a 2D array for Newton-Schulz iteration, got shape [${shape.join(', ')}] instead.`
+      );
+    }
+
+    const transposeNeeded = shape[0] > shape[1];
+    let Y = X;
+
+    if (transposeNeeded) {
+      Y = transpose(Y);
+    }
+
+    // Normalize: Y = Y / (norm(Y) + 1e-7)
+    // norm is computed as sqrt(sum(square(Y)))
+    const arr = Y.toTypedArray();
+    let normSquared = 0;
+    for (let i = 0; i < arr.length; i++) {
+      const val = typeof arr[i] === 'bigint' ? Number(arr[i]) : Number(arr[i]);
+      normSquared += val * val;
+    }
+    const norm = Math.sqrt(normSquared);
+    Y = divide(Y, norm + 1e-7);
+
+    // Newton-Schulz iterations
+    for (let i = 0; i < steps; i++) {
+      // A = Y @ Y.T
+      const YT = transpose(Y);
+      const A = matmul(Y, YT);
+      
+      // B = b * A + c * (A @ A)
+      const AA = matmul(A, A);
+      const B = add(multiply(b, A), multiply(c, AA));
+      
+      // Y = a * Y + B @ Y
+      const BY = matmul(B, Y);
+      Y = add(multiply(a, Y), BY);
+    }
+
+    if (transposeNeeded) {
+      Y = transpose(Y);
+    }
+
+    return Y;
+  }
+
+  protected applySingle(
+    gradient: MLXArray,
+    parameter: MLXArray,
+    state: Record<string, any>
+  ): MLXArray {
+    let grad = gradient;
+
+    // Apply weight decay if configured
+    if (this.weightDecay !== 0) {
+      grad = add(grad, multiply(this.weightDecay, parameter));
+    }
+
+    // Update velocity: v = momentum * v + (1 - momentum) * g
+    const v = state.v;
+    const newV = add(
+      multiply(this.momentum, v),
+      multiply(1 - this.momentum, grad)
+    );
+    state.v = newV;
+
+    // Compute update
+    let update: MLXArray;
+    if (this.nesterov) {
+      // update = (1 - momentum) * g + momentum * v
+      update = add(
+        multiply(1 - this.momentum, grad),
+        multiply(this.momentum, newV)
+      );
+    } else {
+      update = newV;
+    }
+
+    const lr = this.learningRate;
+    const shape = update.shape;
+
+    // Apply Newton-Schulz orthogonalization for 2D+ parameters
+    if (shape.length >= 2) {
+      const originalShape = shape;
+      const reshapeNeeded = shape.length > 2;
+
+      if (reshapeNeeded) {
+        // Reshape to 2D: (shape[0], product of remaining dims)
+        const dim0 = shape[0];
+        const dim1 = shape.slice(1).reduce((a: number, b: number) => a * b, 1);
+        update = reshape(update, [dim0, dim1]);
+      }
+
+      update = this._zeropowerViaNewtonschulz5(update, this.nsSteps);
+
+      if (reshapeNeeded) {
+        update = reshape(update, originalShape);
+      }
+
+      // Scale learning rate by sqrt(max(1, rows/cols))
+      const updateShape = update.shape;
+      const ratio = Math.max(1, updateShape[updateShape.length - 2] / updateShape[updateShape.length - 1]);
+      const scaledLr = multiply(lr, Math.pow(ratio, 0.5));
+      
+      return subtract(parameter, multiply(scaledLr, update));
+    }
+
+    // For 1D parameters, use standard update
+    return subtract(parameter, multiply(lr, update));
+  }
+}
+
 export default {
   Optimizer,
   SGD,
   Adam,
   Adamax,
   Lion,
+  Adagrad,
   RMSprop,
+  Muon,
 };
