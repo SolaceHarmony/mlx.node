@@ -549,5 +549,182 @@ describe('mlx.optimizers', () => {
       assert.ok(state.states[1].layer2?.bias);
       assert.ok(state.states[2].other); // SGD gets everything else
     });
+
+    it('should route parameters correctly in applyGradients', () => {
+      const opt1 = new Lion({ learningRate: 0.001 });
+      const opt2 = new Lion({ learningRate: 0.01 });
+
+      const multiOpt = new MultiOptimizer({
+        optimizers: [opt1, opt2],
+        filters: [(path) => path.includes('weight')],
+      });
+
+      const params = {
+        weight: zeros([3]),
+        bias: zeros([1]),
+      };
+
+      const gradients = {
+        weight: zeros([3]),
+        bias: zeros([1]),
+      };
+
+      multiOpt.init(params);
+      const updated = multiOpt.applyGradients(gradients, params);
+
+      // Verify the result has the correct structure
+      assert.ok(updated);
+      assert.ok('weight' in updated);
+      assert.ok('bias' in updated);
+    });
+
+    it('should handle nested parameter trees in applyGradients', () => {
+      const opt1 = new Lion({ learningRate: 0.001 });
+      const opt2 = new Lion({ learningRate: 0.01 });
+
+      const multiOpt = new MultiOptimizer({
+        optimizers: [opt1, opt2],
+        filters: [(path) => path.includes('weight')],
+      });
+
+      const params = {
+        layer1: {
+          weight: zeros([3, 4]),
+          bias: zeros([4]),
+        },
+        layer2: {
+          weight: zeros([4, 2]),
+          bias: zeros([2]),
+        },
+      };
+
+      const gradients = {
+        layer1: {
+          weight: zeros([3, 4]),
+          bias: zeros([4]),
+        },
+        layer2: {
+          weight: zeros([4, 2]),
+          bias: zeros([2]),
+        },
+      };
+
+      multiOpt.init(params);
+      const updated = multiOpt.applyGradients(gradients, params);
+
+      // Verify nested structure is preserved
+      assert.ok(updated);
+      assert.ok(updated.layer1);
+      assert.ok(updated.layer1.weight);
+      assert.ok(updated.layer1.bias);
+      assert.ok(updated.layer2);
+      assert.ok(updated.layer2.weight);
+      assert.ok(updated.layer2.bias);
+    });
+
+    it('should merge results from multiple optimizers in applyGradients', () => {
+      const opt1 = new Lion({ learningRate: 0.001 });
+      const opt2 = new Lion({ learningRate: 0.01 });
+      const opt3 = new Lion({ learningRate: 0.1 });
+
+      const multiOpt = new MultiOptimizer({
+        optimizers: [opt1, opt2, opt3],
+        filters: [
+          (path) => path.includes('weight'),
+          (path) => path.includes('bias'),
+        ],
+      });
+
+      const params = {
+        layer1: {
+          weight: zeros([3, 4]),
+          bias: zeros([4]),
+        },
+        other: zeros([5]),
+      };
+
+      const gradients = {
+        layer1: {
+          weight: zeros([3, 4]),
+          bias: zeros([4]),
+        },
+        other: zeros([5]),
+      };
+
+      multiOpt.init(params);
+      const updated = multiOpt.applyGradients(gradients, params);
+
+      // Verify all parts are merged into result
+      assert.ok(updated);
+      assert.ok(updated.layer1);
+      assert.ok(updated.layer1.weight); // From opt1
+      assert.ok(updated.layer1.bias); // From opt2
+      assert.ok(updated.other); // From opt3
+    });
+
+    it('should handle array-valued parameters in applyGradients', () => {
+      const opt1 = new Lion({ learningRate: 0.001 });
+      const opt2 = new Lion({ learningRate: 0.01 });
+
+      const multiOpt = new MultiOptimizer({
+        optimizers: [opt1, opt2],
+        filters: [(path) => path.startsWith('0.')], // First array element
+      });
+
+      const params = [zeros([3]), zeros([4]), zeros([5])];
+      const gradients = [zeros([3]), zeros([4]), zeros([5])];
+
+      multiOpt.init(params);
+      const updated = multiOpt.applyGradients(gradients, params);
+
+      // Verify array structure is preserved
+      assert.ok(Array.isArray(updated));
+      assert.strictEqual(updated.length, 3);
+      assert.ok(updated[0]);
+      assert.ok(updated[1]);
+      assert.ok(updated[2]);
+    });
+
+    it('should correctly split mixed nested structures in applyGradients', () => {
+      const opt1 = new Lion({ learningRate: 0.001 });
+      const opt2 = new Lion({ learningRate: 0.01 });
+
+      const multiOpt = new MultiOptimizer({
+        optimizers: [opt1, opt2],
+        filters: [(path) => path.includes('conv')],
+      });
+
+      const params = {
+        conv: {
+          layers: [zeros([3, 3]), zeros([5, 5])],
+        },
+        fc: {
+          weight: zeros([10, 5]),
+          bias: zeros([5]),
+        },
+      };
+
+      const gradients = {
+        conv: {
+          layers: [zeros([3, 3]), zeros([5, 5])],
+        },
+        fc: {
+          weight: zeros([10, 5]),
+          bias: zeros([5]),
+        },
+      };
+
+      multiOpt.init(params);
+      const updated = multiOpt.applyGradients(gradients, params);
+
+      // Verify complex nested structure is preserved
+      assert.ok(updated);
+      assert.ok(updated.conv);
+      assert.ok(Array.isArray(updated.conv.layers));
+      assert.strictEqual(updated.conv.layers.length, 2);
+      assert.ok(updated.fc);
+      assert.ok(updated.fc.weight);
+      assert.ok(updated.fc.bias);
+    });
   });
 });
