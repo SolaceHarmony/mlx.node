@@ -1,7 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { SGD, Adam, Lion, RMSprop, Optimizer, MultiOptimizer } from '../src/optimizers';
-import { SGD, Adam, Adamax, Lion, Adagrad, RMSprop, Muon, Optimizer } from '../src/optimizers';
+import { SGD, Adam, Adamax, Lion, Adagrad, RMSprop, Muon, Optimizer, MultiOptimizer } from '../src/optimizers';
 import { zeros } from '../src/core/array';
 
 describe('mlx.optimizers', () => {

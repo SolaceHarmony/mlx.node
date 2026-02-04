@@ -890,6 +890,56 @@ export class MultiOptimizer extends Optimizer {
   /**
    * Not needed for MultiOptimizer as it delegates to sub-optimizers.
    */
+  protected applySingle(
+    gradient: MLXArray,
+    parameter: MLXArray,
+    state: Record<string, any>
+  ): MLXArray {
+    // This method is required by the abstract base class but not used by MultiOptimizer
+    // since we override applyGradients() directly
+    throw new Error('MultiOptimizer.applySingle should not be called directly');
+  }
+
+  /**
+   * Get the combined state from all sub-optimizers.
+   */
+  get state(): Record<string, any> {
+    return {
+      states: this.optimizers.map((opt) => opt.state),
+    };
+  }
+
+  /**
+   * Set the state for all sub-optimizers.
+   */
+  set state(state: Record<string, any>) {
+    if (!state.states || state.states.length !== this.optimizers.length) {
+      throw new Error('Invalid state provided');
+    }
+
+    for (let i = 0; i < this.optimizers.length; i++) {
+      this.optimizers[i].state = state.states[i];
+    }
+  }
+
+  /**
+   * Get the learning rate from the first optimizer.
+   */
+  get learningRate(): MLXArray {
+    return this.optimizers[0].learningRate;
+  }
+
+  /**
+   * Set the learning rate for all sub-optimizers.
+   */
+  set learningRate(lr: number | MLXArray) {
+    for (const opt of this.optimizers) {
+      opt.learningRate = lr;
+    }
+  }
+}
+
+/**
  * Muon Optimizer Options
  */
 export interface MuonOptions {
@@ -1018,47 +1068,6 @@ export class Muon extends Optimizer {
     parameter: MLXArray,
     state: Record<string, any>
   ): MLXArray {
-    // This method is required by the abstract base class but not used by MultiOptimizer
-    // since we override applyGradients() directly
-    throw new Error('MultiOptimizer.applySingle should not be called directly');
-  }
-
-  /**
-   * Get the combined state from all sub-optimizers.
-   */
-  get state(): Record<string, any> {
-    return {
-      states: this.optimizers.map((opt) => opt.state),
-    };
-  }
-
-  /**
-   * Set the state for all sub-optimizers.
-   */
-  set state(state: Record<string, any>) {
-    if (!state.states || state.states.length !== this.optimizers.length) {
-      throw new Error('Invalid state provided');
-    }
-
-    for (let i = 0; i < this.optimizers.length; i++) {
-      this.optimizers[i].state = state.states[i];
-    }
-  }
-
-  /**
-   * Get the learning rate from the first optimizer.
-   */
-  get learningRate(): MLXArray {
-    return this.optimizers[0].learningRate;
-  }
-
-  /**
-   * Set the learning rate for all sub-optimizers.
-   */
-  set learningRate(lr: number | MLXArray) {
-    for (const opt of this.optimizers) {
-      opt.learningRate = lr;
-    }
     let grad = gradient;
 
     // Apply weight decay if configured
