@@ -7,7 +7,7 @@
 
 import MLXArray, { zeros, zerosLike } from '../core/array';
 import { add, multiply, subtract, sign, square, sqrt, divide, abs, maximum, matmul, reshape, transpose } from '../core/ops';
-import { treeMap } from '../utils';
+import { treeMap, treeFlatten, treeUnflatten, treeMerge } from '../utils';
 
 /**
  * Scheduler function type - maps step number to a parameter value
@@ -758,6 +758,188 @@ export class RMSprop extends Optimizer {
 }
 
 /**
+ * Filter function type - takes the full path and the associated leaf value
+ * (e.g., a parameter or its gradient) and returns true if it should be
+ * considered for the optimizer.
+ */
+export type OptimizerFilter = (path: string, value: any) => boolean;
+
+/**
+ * MultiOptimizer Options
+ */
+export interface MultiOptimizerOptions {
+  /** A list of optimizers to delegate to */
+  optimizers: Optimizer[];
+  /** A list of predicates/filters that should be one less than the provided optimizers */
+  filters?: OptimizerFilter[];
+}
+
+/**
+ * Wraps a list of optimizers with corresponding weight predicates/filters
+ * to make it easy to use different optimizers for different weights.
+ * 
+ * The predicates take the full "path" of the weight and the weight itself and
+ * return true if it should be considered for this optimizer. The last
+ * optimizer in the list is a fallback optimizer and no predicate should be
+ * given for it.
+ * 
+ * @example
+ * ```typescript
+ * const opt1 = new Adam({ learningRate: 0.001 });
+ * const opt2 = new SGD({ learningRate: 0.01 });
+ * 
+ * // Use Adam for 'weight' parameters, SGD for everything else
+ * const multiOpt = new MultiOptimizer({
+ *   optimizers: [opt1, opt2],
+ *   filters: [(path, _param) => path.includes('weight')]
+ * });
+ * ```
+ */
+export class MultiOptimizer extends Optimizer {
+  optimizers: Optimizer[];
+  filters: OptimizerFilter[];
+
+  constructor(options: MultiOptimizerOptions) {
+    super();
+    const { optimizers, filters = [] } = options;
+
+    this._state = {};
+
+    if (filters.length !== optimizers.length - 1) {
+      throw new Error(
+        `Given ${filters.length} filters but ${optimizers.length - 1} needed.`
+      );
+    }
+
+    this.optimizers = optimizers;
+    // Add a catch-all filter for the last optimizer
+    this.filters = [...filters, () => true];
+  }
+
+  /**
+   * Split a parameter/gradient dictionary according to the filters.
+   * Each optimizer gets the parameters/gradients that match its filter.
+   */
+  private _splitDictionary(tree: Record<string, any>): Record<string, any>[] {
+    if (this.optimizers.length === 1) {
+      return [tree];
+    }
+
+    // Initialize parts array with empty arrays for each optimizer
+    const parts: Array<[string, any]>[] = this.optimizers.map(() => []);
+
+    // Flatten the tree to get (path, value) pairs
+    const flatTree = treeFlatten(tree) as Array<[string, any]>;
+
+    // Assign each (path, value) pair to the first matching filter
+    for (const [key, value] of flatTree) {
+      for (let i = 0; i < this.filters.length; i++) {
+        if (this.filters[i](key, value)) {
+          parts[i].push([key, value]);
+          break;
+        }
+      }
+    }
+
+    // Unflatten each part back into a tree
+    return parts.map((part) => treeUnflatten(part) as Record<string, any>);
+  }
+
+  /**
+   * Initialize the optimizer's state.
+   * Delegates to each sub-optimizer with its portion of parameters.
+   */
+  init(parameters: Record<string, any>): void {
+    const splits = this._splitDictionary(parameters);
+    for (let i = 0; i < this.optimizers.length; i++) {
+      this.optimizers[i].init(splits[i]);
+    }
+  }
+
+  /**
+   * Apply gradients to parameters and return updated parameters.
+   * Delegates to each sub-optimizer and merges the results.
+   */
+  applyGradients(
+    gradients: Record<string, any>,
+    parameters: Record<string, any>
+  ): Record<string, any> {
+    const gradientSplits = this._splitDictionary(gradients);
+    const parameterSplits = this._splitDictionary(parameters);
+    let result: Record<string, any> = {};
+
+    for (let i = 0; i < this.optimizers.length; i++) {
+      const updated = this.optimizers[i].applyGradients(
+        gradientSplits[i],
+        parameterSplits[i]
+      );
+      result = treeMerge(result, updated) as Record<string, any>;
+    }
+
+    return result;
+  }
+
+  /**
+   * Not needed for MultiOptimizer as it delegates to sub-optimizers.
+   */
+  protected initSingle(parameter: MLXArray, state: Record<string, any>): void {
+    // This method is required by the abstract base class but not used by MultiOptimizer
+    // since we override init() directly
+  }
+
+  /**
+   * Not needed for MultiOptimizer as it delegates to sub-optimizers.
+   */
+  protected applySingle(
+    gradient: MLXArray,
+    parameter: MLXArray,
+    state: Record<string, any>
+  ): MLXArray {
+    // This method is required by the abstract base class but not used by MultiOptimizer
+    // since we override applyGradients() directly
+    throw new Error('MultiOptimizer.applySingle should not be called directly');
+  }
+
+  /**
+   * Get the combined state from all sub-optimizers.
+   */
+  get state(): Record<string, any> {
+    return {
+      states: this.optimizers.map((opt) => opt.state),
+    };
+  }
+
+  /**
+   * Set the state for all sub-optimizers.
+   */
+  set state(state: Record<string, any>) {
+    if (!state.states || state.states.length !== this.optimizers.length) {
+      throw new Error('Invalid state provided');
+    }
+
+    for (let i = 0; i < this.optimizers.length; i++) {
+      this.optimizers[i].state = state.states[i];
+    }
+  }
+
+  /**
+   * Get the learning rate from the first optimizer.
+   */
+  get learningRate(): MLXArray {
+    return this.optimizers[0].learningRate;
+  }
+
+  /**
+   * Set the learning rate for all sub-optimizers.
+   */
+  set learningRate(lr: number | MLXArray) {
+    for (const opt of this.optimizers) {
+      opt.learningRate = lr;
+    }
+  }
+}
+
+/**
  * Muon Optimizer Options
  */
 export interface MuonOptions {
@@ -955,5 +1137,6 @@ export default {
   Lion,
   Adagrad,
   RMSprop,
+  MultiOptimizer,
   Muon,
 };

@@ -48,6 +48,59 @@ The Stochastic Gradient Descent optimizer:
 - **State initialization**: `initSingle()` creates velocity state
 - **Gradient application**: `applySingle()` has placeholder (requires core ops)
 
+#### ✅ `MultiOptimizer` (Implemented)
+Wraps multiple optimizers with filters to apply different optimizers to different parameters:
+- **Constructor**: Takes a list of optimizers and filters
+- **Filter-based routing**: Uses predicates to split parameters among optimizers
+- **State management**: Aggregates state from all sub-optimizers
+- **Learning rate propagation**: Setting learning rate updates all sub-optimizers
+- **Current tests**: Cover constructor, filter routing, and state management; additional tests are planned for `applyGradients` routing and merging behavior
+
+**Implementation Details:**
+```typescript
+export class MultiOptimizer extends Optimizer {
+  optimizers: Optimizer[];
+  filters: OptimizerFilter[];
+
+  constructor(options: MultiOptimizerOptions) {
+    // Validates filters.length === optimizers.length - 1
+    // Adds catch-all filter for last optimizer
+  }
+  
+  private _splitDictionary(tree: Record<string, any>): Record<string, any>[] {
+    // Uses treeFlatten/treeUnflatten to split parameters by filters
+  }
+  
+  init(parameters: Record<string, any>): void {
+    // Delegates to each sub-optimizer with its portion of parameters
+  }
+  
+  applyGradients(gradients, parameters): Record<string, any> {
+    // Delegates to each sub-optimizer and merges results
+  }
+}
+```
+
+**Usage Example:**
+```typescript
+import { MultiOptimizer, Adam, SGD } from 'mlx/optimizers';
+
+// Use Adam for 'weight' parameters, SGD for everything else
+const multiOpt = new MultiOptimizer({
+  optimizers: [
+    new Adam({ learningRate: 0.001 }),
+    new SGD({ learningRate: 0.01 })
+  ],
+  filters: [
+    (path, _param) => path.includes('weight')
+  ]
+});
+
+// Initialize and use like any other optimizer
+multiOpt.init(parameters);
+const updated = multiOpt.applyGradients(gradients, parameters);
+```
+
 ### What's Missing
 
 The full implementation of gradient updates in derived classes (like `SGD.applySingle()`) requires core array operations that are not yet available:
@@ -99,6 +152,7 @@ The Node.js optimizer implementation follows the same design as Python MLX:
 | `SGD` gradient updates | ✅ | ⚠️ | Blocked on astype |
 | `Lion` optimizer | ✅ | ✅ | Complete |
 | `RMSprop` optimizer | ✅ | ✅ | Complete |
+| `MultiOptimizer` | ✅ | ✅ | Complete |
 | `Muon` optimizer | ✅ | ✅ | Complete |
 | Other optimizers (Adam, AdamW, Adagrad, etc.) | ✅ | ⚠️ | Partial (Adam structure exists) |
 
@@ -157,8 +211,9 @@ To complete optimizer functionality:
 4. ⚠️ **Complete SGD.applySingle()** - Blocked on missing astype operation
 5. ✅ **Lion optimizer** - DONE (fully implemented)
 6. ✅ **RMSprop optimizer** - DONE (fully implemented)
-7. ⬜ **Implement other optimizers** - Adam, AdamW, Adagrad, etc.
-8. ⬜ **Integration tests** - Full gradient update testing
+7. ✅ **MultiOptimizer** - DONE (fully implemented with comprehensive tests)
+8. ⬜ **Implement other optimizers** - Adam, AdamW, Adagrad, etc.
+9. ⬜ **Integration tests** - Full gradient update testing
 
 ## References
 
