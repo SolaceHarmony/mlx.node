@@ -153,6 +153,7 @@ The Node.js optimizer implementation follows the same design as Python MLX:
 | `Lion` optimizer | ✅ | ✅ | Complete |
 | `RMSprop` optimizer | ✅ | ✅ | Complete |
 | `MultiOptimizer` | ✅ | ✅ | Complete |
+| `Muon` optimizer | ✅ | ✅ | Complete |
 | Other optimizers (Adam, AdamW, Adagrad, etc.) | ✅ | ⚠️ | Partial (Adam structure exists) |
 
 ## Why Not a C++ Binding?

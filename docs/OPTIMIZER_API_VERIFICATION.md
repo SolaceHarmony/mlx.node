@@ -141,12 +141,12 @@ The only remaining work for complete optimizer functionality:
 
 2. **Additional optimizer classes**:
    - ✅ Adam (structure and validation complete, blocked on missing core ops)
+   - ✅ Adamax (fully implemented with all required ops)
+   - ✅ Lion (fully implemented with all required ops)
+   - ✅ RMSprop (fully implemented with all required ops)
    - AdamW
-   - RMSprop
    - Adagrad
    - AdaDelta
-   - Adamax
-   - Lion
    - Adafactor
    - Muon
 

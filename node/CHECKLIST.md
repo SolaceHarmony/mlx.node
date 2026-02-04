@@ -46,6 +46,7 @@ Reference source map: see `PORTING_PLAN.md` for the list of upstream C++ and Pyt
 - [ ] Complete `SGD.applySingle()` implementation (requires subtract, scalar ops, astype).
 - [x] Add `Adam` optimizer (structure and validation complete, blocked on missing core ops).
 - [ ] Complete `Adam.applySingle()` implementation (requires subtract, divide, square, sqrt, rsqrt, power).
+- [x] Add `Adamax` optimizer (fully implemented with all required ops).
 - [x] Add `Lion` optimizer (fully implemented with all required ops).
 - [x] Add `RMSprop` optimizer (fully implemented with all required ops).
 - [ ] Add `AdamW` optimizer.

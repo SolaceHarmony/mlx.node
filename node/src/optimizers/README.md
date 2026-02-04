@@ -17,6 +17,14 @@ This module provides optimizer implementations for training neural networks with
 - **Validation**: Parameter validation (e.g., Nesterov requirements, RMSprop alpha/epsilon, MultiOptimizer filter count)
 - **State management**: Proper state initialization and tracking
 - **Tests**: Unit tests for SGD, Lion, RMSprop, and MultiOptimizer with comprehensive coverage
+- **`Adagrad` optimizer class**: Adaptive Gradient algorithm with accumulated squared gradients for adaptive learning rates
+- **`Muon` optimizer class**: MomentUm Orthogonalized by Newton-schulz, optimized for 2D+ parameters with orthogonalization
+- **Core operations**: `add`, `multiply`, `subtract`, `sign`, `square`, `sqrt`, `divide`, `matmul`, `reshape`, `transpose` bindings exposed for optimizer math
+- **API structure**: Matches Python MLX API for optimizer initialization and configuration
+- **Type safety**: Full TypeScript types and interfaces
+- **Validation**: Parameter validation (e.g., Nesterov requirements, RMSprop alpha/epsilon, Adagrad epsilon)
+- **State management**: Proper state initialization and tracking
+- **Tests**: Unit tests for SGD, Lion, RMSprop, Muon constructors and Adagrad constructors, validation, and state management
 
 ### ⚠️ Partially Implemented
 
@@ -221,6 +229,37 @@ const complexOpt = new MultiOptimizer({
 - Apply different optimization strategies to different layer types
 - Use aggressive optimizers for fast-changing parameters, conservative ones for stable parameters
 - Separate treatment for embeddings vs. main network layers
+### `Adagrad` (Adaptive Gradient Algorithm)
+
+**Constructor Options:**
+```typescript
+interface AdagradOptions {
+  learningRate: number | Scheduler;
+  eps?: number;     // Numerical stability term (default: 1e-8)
+}
+```
+
+**Update Formula:**
+```
+v_{t+1} = v_t + g_t²
+w_{t+1} = w_t - λ * g_t / (√v_{t+1} + ε)
+```
+
+Where:
+- `λ` is the learning rate
+- `v_t` is the accumulated sum of squared gradients (not a moving average)
+- `g_t` is the gradient
+- `ε` is added to the denominator for numerical stability
+
+**Validation:**
+- `eps` must be > 0
+- Throws error if validation fails
+
+**Notes:**
+- Adagrad accumulates all historical squared gradients, unlike RMSprop which uses a decaying average
+- Learning rate automatically decreases over time as the accumulator grows
+- Well-suited for sparse gradients and natural language processing tasks
+- Reference: Duchi, Hazan & Singer (2011), Adaptive subgradient methods for online learning and stochastic optimization
 
 ## Architecture
 
@@ -270,8 +309,10 @@ To further improve optimizer functionality:
 
 6. **Implement other optimizers**:
    - AdamW
-   - Adagrad
    - Adadelta
+   - Adamax
+   - Adafactor
+   - Muon
    - etc.
 
 ## References
