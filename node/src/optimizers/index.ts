@@ -478,15 +478,16 @@ export interface AdamWOptions {
  *
  *   m_{t+1} = β₁ * m_t + (1 - β₁) * g_t
  *   v_{t+1} = β₂ * v_t + (1 - β₂) * g_t²
- *   w_{t+1} = w_t - λ * (m_{t+1} / (√v_{t+1} + ε) + weight_decay * w_t)
+ *   w'_t = w_t * (1 - λ * weight_decay)
+ *   w_{t+1} = w'_t - λ * (m_{t+1} / (√v_{t+1} + ε))
  *
  * where λ is the learning rate, m_t and v_t are the first and second moment estimates,
  * g_t is the gradient, ε is a small constant for numerical stability, and weight_decay
  * is the decoupled weight decay coefficient.
  *
  * The key difference from Adam with L2 regularization is that the weight decay is applied
- * directly to the parameters rather than to the gradients, which has been shown to improve
- * generalization in deep learning.
+ * directly to the parameters (w'_t = w_t * (1 - λ * weight_decay)) rather than to the 
+ * gradients, which has been shown to improve generalization in deep learning.
  *
  * @example
  * ```typescript
