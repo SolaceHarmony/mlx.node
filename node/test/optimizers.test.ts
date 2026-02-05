@@ -924,6 +924,8 @@ describe('mlx.optimizers', () => {
       assert.ok(updated.fc.weight);
       assert.ok(updated.fc.bias);
     });
+  });
+
   describe('Adagrad', () => {
     it('should create Adagrad optimizer with learning rate', () => {
       const optimizer = new Adagrad({ learningRate: 0.01 });

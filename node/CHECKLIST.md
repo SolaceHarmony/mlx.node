@@ -49,7 +49,7 @@ Reference source map: see `PORTING_PLAN.md` for the list of upstream C++ and Pyt
 - [x] Add `Adamax` optimizer (fully implemented with all required ops).
 - [x] Add `Lion` optimizer (fully implemented with all required ops).
 - [x] Add `RMSprop` optimizer (fully implemented with all required ops).
-- [ ] Add `AdamW` optimizer.
+- [x] Add `AdamW` optimizer.
 - [ ] Add `Adagrad` optimizer.
 - [ ] Add scheduler support (`mlx.optimizers.schedulers`).
 
