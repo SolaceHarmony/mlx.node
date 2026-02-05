@@ -454,6 +454,79 @@ export class Adam extends Optimizer {
 }
 
 /**
+ * AdamW Optimizer Options
+ */
+export interface AdamWOptions {
+  /** The learning rate */
+  learningRate: SchedulableParam;
+  /** The coefficients (β₁, β₂) used for computing running averages of gradient and its square (default: [0.9, 0.999]) */
+  betas?: [number, number];
+  /** The term ε added to the denominator to improve numerical stability (default: 1e-8) */
+  eps?: number;
+  /** The weight decay λ for decoupled weight decay regularization (default: 0.01) */
+  weightDecay?: number;
+  /** Whether to apply bias correction (default: false) */
+  biasCorrection?: boolean;
+}
+
+/**
+ * The AdamW optimizer with decoupled weight decay regularization.
+ *
+ * Implements the AdamW algorithm from "Decoupled Weight Decay Regularization" (Loshchilov & Hutter, 2019).
+ *
+ * The algorithm updates parameters as follows:
+ *
+ *   m_{t+1} = β₁ * m_t + (1 - β₁) * g_t
+ *   v_{t+1} = β₂ * v_t + (1 - β₂) * g_t²
+ *   w_{t+1} = w_t - λ * (m_{t+1} / (√v_{t+1} + ε) + weight_decay * w_t)
+ *
+ * where λ is the learning rate, m_t and v_t are the first and second moment estimates,
+ * g_t is the gradient, ε is a small constant for numerical stability, and weight_decay
+ * is the decoupled weight decay coefficient.
+ *
+ * The key difference from Adam with L2 regularization is that the weight decay is applied
+ * directly to the parameters rather than to the gradients, which has been shown to improve
+ * generalization in deep learning.
+ *
+ * @example
+ * ```typescript
+ * const optimizer = new AdamW({ learningRate: 0.001, weightDecay: 0.01 });
+ * // ... during training:
+ * // const updatedParams = optimizer.applyGradients(gradients, parameters);
+ * ```
+ */
+export class AdamW extends Adam {
+  weightDecay: number;
+
+  constructor(options: AdamWOptions) {
+    const {
+      learningRate,
+      betas = [0.9, 0.999],
+      eps = 1e-8,
+      weightDecay = 0.01,
+      biasCorrection = false
+    } = options;
+
+    super({ learningRate, betas, eps, biasCorrection });
+    this.weightDecay = weightDecay;
+  }
+
+  protected applySingle(
+    gradient: MLXArray,
+    parameter: MLXArray,
+    state: Record<string, any>
+  ): MLXArray {
+    // Apply decoupled weight decay by modifying the parameter before
+    // passing it to Adam's update rule: w_t * (1 - lr * weight_decay)
+    const lr = this.learningRate;
+    const decayedParameter = multiply(parameter, subtract(1, multiply(lr, this.weightDecay)));
+    
+    // Call parent's applySingle with the decayed parameter
+    return super.applySingle(gradient, decayedParameter, state);
+  }
+}
+
+/**
  * Adamax Optimizer Options
  */
 export interface AdamaxOptions {
@@ -1133,6 +1206,7 @@ export default {
   Optimizer,
   SGD,
   Adam,
+  AdamW,
   Adamax,
   Lion,
   Adagrad,
