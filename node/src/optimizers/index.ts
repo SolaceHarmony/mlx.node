@@ -670,6 +670,18 @@ export interface AdagradOptions {
 }
 
 /**
+ * AdaDelta Optimizer Options
+ */
+export interface AdaDeltaOptions {
+  /** The learning rate */
+  learningRate: SchedulableParam;
+  /** The coefficient ρ used for computing a running average of squared gradients (default: 0.9) */
+  rho?: number;
+  /** The term ε added to the denominator to improve numerical stability (default: 1e-6) */
+  eps?: number;
+}
+
+/**
  * RMSprop Optimizer Options
  */
 export interface RMSpropOptions {
@@ -750,6 +762,99 @@ export class Adagrad extends Optimizer {
     const denominator = add(sqrtV, eps);
     const update = divide(gradient, denominator);
     return subtract(parameter, multiply(lr, update));
+  }
+}
+
+/**
+ * The AdaDelta optimizer with a learning rate.
+ *
+ * AdaDelta is an adaptive learning rate optimization algorithm that
+ * uses running averages of both squared gradients and squared updates
+ * to normalize the gradient. Unlike RMSprop and Adagrad, AdaDelta does
+ * not require a manually set global learning rate.
+ *
+ * Reference: Zeiler, M.D., 2012. ADADELTA: an adaptive learning rate method.
+ * arXiv preprint arXiv:1212.5701.
+ *
+ * The algorithm updates parameters as follows:
+ *
+ *   v_{t+1} = ρ * v_t + (1 - ρ) * g_t²
+ *   Δw_{t+1} = √(u_t + ε) / √(v_{t+1} + ε) * g_t
+ *   u_{t+1} = ρ * u_t + (1 - ρ) * Δw_{t+1}²
+ *   w_{t+1} = w_t - λ * Δw_{t+1}
+ *
+ * where λ is the learning rate, ρ is the decay rate,
+ * g_t is the gradient, v_t is the moving average of squared gradients,
+ * u_t is the moving average of squared updates,
+ * and ε is a small constant for numerical stability.
+ *
+ * @example
+ * ```typescript
+ * const optimizer = new AdaDelta({ learningRate: 1.0, rho: 0.9 });
+ * // ... during training:
+ * // const updatedParams = optimizer.applyGradients(gradients, parameters);
+ * ```
+ */
+export class AdaDelta extends Optimizer {
+  rho: number;
+  eps: number;
+
+  constructor(options: AdaDeltaOptions) {
+    super();
+
+    const { learningRate, rho = 0.9, eps = 1e-6 } = options;
+
+    if (rho < 0.0) {
+      throw new Error(`AdaDelta rho should be >=0, ${rho} was provided instead`);
+    }
+    if (eps <= 0.0) {
+      throw new Error(`AdaDelta epsilon should be >0, ${eps} was provided instead`);
+    }
+
+    this._maybeSchedule('learning_rate', learningRate);
+    this.rho = rho;
+    this.eps = eps;
+  }
+
+  protected initSingle(parameter: MLXArray, state: Record<string, any>): void {
+    // Initialize moving average of squared gradients with zerosLike
+    state.v = zerosLike(parameter);
+    // Initialize moving average of squared updates with zerosLike
+    state.u = zerosLike(parameter);
+  }
+
+  protected applySingle(
+    gradient: MLXArray,
+    parameter: MLXArray,
+    state: Record<string, any>
+  ): MLXArray {
+    const lr = this.learningRate;
+    const rho = this.rho;
+    const eps = this.eps;
+
+    // Get moving averages from state
+    let v = state.v;  // Moving average of squared gradients
+    let u = state.u;  // Moving average of squared updates
+
+    // Update moving average of squared gradients: v = ρ * v + (1 - ρ) * g²
+    const gradSquared = square(gradient);
+    v = add(multiply(rho, v), multiply(1 - rho, gradSquared));
+
+    // Compute update: Δw = √(u + ε) / √(v + ε) * g
+    const sqrtU = sqrt(add(u, eps));
+    const sqrtV = sqrt(add(v, eps));
+    const d = multiply(divide(sqrtU, sqrtV), gradient);
+
+    // Update moving average of squared updates: u = ρ * u + (1 - ρ) * Δw²
+    const dSquared = square(d);
+    u = add(multiply(rho, u), multiply(1 - rho, dSquared));
+
+    // Store updated moving averages
+    state.v = v;
+    state.u = u;
+
+    // Return updated parameter: w = w - lr * Δw
+    return subtract(parameter, multiply(lr, d));
   }
 }
 
