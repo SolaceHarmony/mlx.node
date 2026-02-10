@@ -1316,6 +1316,7 @@ export default {
   Adamax,
   Lion,
   Adagrad,
+  AdaDelta,
   RMSprop,
   MultiOptimizer,
   Muon,
