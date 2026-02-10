@@ -144,11 +144,11 @@ The only remaining work for complete optimizer functionality:
    - ✅ Adamax (fully implemented with all required ops)
    - ✅ Lion (fully implemented with all required ops)
    - ✅ RMSprop (fully implemented with all required ops)
-   - AdamW
-   - Adagrad
-   - AdaDelta
+   - ✅ AdamW (fully implemented with all required ops)
+   - ✅ Adagrad (fully implemented with all required ops)
+   - ✅ AdaDelta (fully implemented with all required ops)
+   - ✅ Muon (fully implemented with all required ops)
    - Adafactor
-   - Muon
 
 3. **Integration tests** for gradient application (once core ops available)
 

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { SGD, Adam, AdamW, Adamax, Lion, Adagrad, RMSprop, Adafactor, Muon, Optimizer, MultiOptimizer } from '../src/optimizers';
+import { SGD, Adam, AdamW, Adamax, Lion, Adagrad, AdaDelta, RMSprop, Adafactor, Muon, Optimizer, MultiOptimizer } from '../src/optimizers';
 import { zeros } from '../src/core/array';
 
 describe('mlx.optimizers', () => {
@@ -1139,6 +1139,93 @@ describe('mlx.optimizers', () => {
     it('should allow setting learning rate', () => {
       const optimizer = new Adagrad({ learningRate: 0.01 });
       optimizer.learningRate = 0.001;
+      // Note: This test is placeholder since we can't properly set scalar values yet
+      assert.ok(optimizer.learningRate);
+    });
+  });
+
+  describe('AdaDelta', () => {
+    it('should create AdaDelta optimizer with learning rate', () => {
+      const optimizer = new AdaDelta({ learningRate: 1.0 });
+      assert.ok(optimizer instanceof Optimizer);
+      assert.ok(optimizer instanceof AdaDelta);
+      assert.strictEqual(optimizer.rho, 0.9);
+      assert.strictEqual(optimizer.eps, 1e-6);
+    });
+
+    it('should create AdaDelta optimizer with custom rho', () => {
+      const optimizer = new AdaDelta({
+        learningRate: 1.0,
+        rho: 0.95
+      });
+      assert.strictEqual(optimizer.rho, 0.95);
+    });
+
+    it('should create AdaDelta optimizer with custom epsilon', () => {
+      const optimizer = new AdaDelta({
+        learningRate: 1.0,
+        eps: 1e-8
+      });
+      assert.strictEqual(optimizer.eps, 1e-8);
+    });
+
+    it('should throw error for negative rho', () => {
+      assert.throws(
+        () => new AdaDelta({ learningRate: 1.0, rho: -0.1 }),
+        /AdaDelta rho should be >=0/
+      );
+    });
+
+    it('should throw error for non-positive epsilon', () => {
+      assert.throws(
+        () => new AdaDelta({ learningRate: 1.0, eps: 0 }),
+        /AdaDelta epsilon should be >0/
+      );
+      assert.throws(
+        () => new AdaDelta({ learningRate: 1.0, eps: -1e-6 }),
+        /AdaDelta epsilon should be >0/
+      );
+    });
+
+    it('should have learning rate in state', () => {
+      const optimizer = new AdaDelta({ learningRate: 1.0 });
+      const lr = optimizer.learningRate;
+      assert.ok(lr);
+    });
+
+    it('should initialize state for parameters', () => {
+      const optimizer = new AdaDelta({ learningRate: 1.0, rho: 0.9 });
+      const params = {
+        weight: zeros([3]),
+        bias: zeros([1])
+      };
+
+      optimizer.init(params);
+
+      // Check that state was initialized
+      assert.ok(optimizer.state);
+      assert.ok('step' in optimizer.state);
+      assert.ok('learning_rate' in optimizer.state);
+      assert.ok('weight' in optimizer.state);
+      assert.ok('bias' in optimizer.state);
+
+      // Check that moving averages were initialized
+      assert.ok('v' in optimizer.state.weight);
+      assert.ok('u' in optimizer.state.weight);
+      assert.ok('v' in optimizer.state.bias);
+      assert.ok('u' in optimizer.state.bias);
+    });
+
+    it('should track step count', () => {
+      const optimizer = new AdaDelta({ learningRate: 1.0 });
+      const step = optimizer.step;
+      assert.ok(step);
+      assert.strictEqual(step.toTypedArray()[0], 0);
+    });
+
+    it('should allow setting learning rate', () => {
+      const optimizer = new AdaDelta({ learningRate: 1.0 });
+      optimizer.learningRate = 0.5;
       // Note: This test is placeholder since we can't properly set scalar values yet
       assert.ok(optimizer.learningRate);
     });
