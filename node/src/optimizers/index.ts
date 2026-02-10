@@ -6,7 +6,7 @@
  */
 
 import MLXArray, { zeros, zerosLike } from '../core/array';
-import { add, multiply, subtract, sign, square, sqrt, divide, abs, maximum, matmul, reshape, transpose } from '../core/ops';
+import { add, multiply, subtract, sign, square, sqrt, divide, abs, maximum, minimum, matmul, reshape, transpose, rsqrt, power } from '../core/ops';
 import { treeMap, treeFlatten, treeUnflatten, treeMerge } from '../utils';
 
 /**
@@ -937,6 +937,299 @@ export class RMSprop extends Optimizer {
 }
 
 /**
+ * Adafactor Optimizer Options
+ */
+export interface AdafactorOptions {
+  /** The learning rate (optional). If not provided and relativeStep is true, uses adaptive step size */
+  learningRate?: SchedulableParam;
+  /** The epsilon values (eps1, eps2) for numerical stability and parameter scaling (default: [1e-30, 1e-3]) */
+  eps?: [number, number];
+  /** Clips the unscaled update at this threshold (default: 1.0) */
+  clipThreshold?: number;
+  /** Coefficient for the running average of squared gradient (default: -0.8) */
+  decayRate?: number;
+  /** If set, enables first moment (momentum). Default: none */
+  beta1?: number;
+  /** The weight decay λ (default: 0.0) */
+  weightDecay?: number;
+  /** If true, scales learning rate by RMS of parameters (default: true) */
+  scaleParameter?: boolean;
+  /** If true, uses relative step size instead of learning_rate (default: true) */
+  relativeStep?: boolean;
+  /** If true, uses warmup initialization for relative step (default: false) */
+  warmupInit?: boolean;
+}
+
+/**
+ * The Adafactor optimizer with adaptive learning rates and memory-efficient updates.
+ *
+ * Implements the Adafactor algorithm from "Adafactor: Adaptive Learning Rates with Sublinear Memory Cost"
+ * (Shazeer & Stern, 2018).
+ *
+ * Adafactor uses factored second-moment estimation for parameters with 2 or more dimensions,
+ * which reduces memory usage. For 1D parameters, it uses standard second-moment estimation.
+ *
+ * Key features:
+ * - Memory-efficient: Uses factored second moments for multi-dimensional parameters
+ * - Adaptive learning rates: Can compute relative step sizes automatically
+ * - Optional momentum: Supports first-moment estimation via beta1
+ * - Gradient clipping: Built-in clipping of updates
+ *
+ * @example
+ * ```typescript
+ * // With default settings (adaptive learning rate)
+ * const optimizer = new Adafactor({});
+ *
+ * // With fixed learning rate
+ * const optimizer = new Adafactor({ 
+ *   learningRate: 0.001, 
+ *   relativeStep: false 
+ * });
+ *
+ * // With momentum
+ * const optimizer = new Adafactor({ 
+ *   learningRate: 0.001,
+ *   relativeStep: false,
+ *   beta1: 0.9 
+ * });
+ * ```
+ */
+export class Adafactor extends Optimizer {
+  eps: [number, number];
+  clipThreshold: number;
+  decayRate: number;
+  beta1?: number;
+  weightDecay: number;
+  scaleParameter: boolean;
+  relativeStep: boolean;
+  warmupInit: boolean;
+
+  constructor(options: AdafactorOptions = {}) {
+    super();
+
+    const {
+      learningRate,
+      eps = [1e-30, 1e-3],
+      clipThreshold = 1.0,
+      decayRate = -0.8,
+      beta1,
+      weightDecay = 0.0,
+      scaleParameter = true,
+      relativeStep = true,
+      warmupInit = false,
+    } = options;
+
+    if (learningRate !== undefined) {
+      this._maybeSchedule('learning_rate', learningRate);
+    }
+
+    this.eps = eps;
+    this.clipThreshold = clipThreshold;
+    this.decayRate = decayRate;
+    this.beta1 = beta1;
+    this.weightDecay = weightDecay;
+    this.scaleParameter = scaleParameter;
+    this.relativeStep = relativeStep;
+    this.warmupInit = warmupInit;
+  }
+
+  protected initSingle(parameter: MLXArray, state: Record<string, any>): void {
+    // For parameters with 2+ dimensions, use factored second moments (row/col)
+    // For 1D parameters, use standard second moment
+    if (parameter.shape.length >= 2) {
+      const shape = parameter.shape;
+      const dtype = parameter.dtype;
+      // Row-wise average: shape[:-1]
+      const rowShape = shape.slice(0, -1);
+      // Column-wise average: shape[:-2] + shape[-1:]
+      const colShape = [...shape.slice(0, -2), shape[shape.length - 1]];
+      
+      state.exp_avg_sq_row = zeros(rowShape, dtype);
+      state.exp_avg_sq_col = zeros(colShape, dtype);
+    } else {
+      state.exp_avg_sq = zerosLike(parameter);
+    }
+
+    // If beta1 is set, initialize first moment (momentum)
+    if (this.beta1 !== undefined) {
+      state.exp_avg = zerosLike(parameter);
+    }
+  }
+
+  protected applySingle(
+    gradient: MLXArray,
+    parameter: MLXArray,
+    state: Record<string, any>
+  ): MLXArray {
+    // Note: This implementation requires the `mean` operation along axes
+    // which is not yet available in the Node.js MLX bindings.
+    // The factored second-moment computation requires:
+    // - mean(update, axis=-1) for row-wise mean
+    // - mean(update, axis=-2) for column-wise mean
+    // - mean(square(inputs)) for RMS computation
+    // 
+    // Once these operations are available, this implementation can be completed.
+
+    throw new Error(
+      'Adafactor.applySingle is not yet fully implemented. ' +
+      'This requires the `mean` operation along axes which is not yet available ' +
+      'in the Node.js MLX bindings. Required operations: ' +
+      'mean(array, axis=N), expandDims(array, axis=N). ' +
+      'See python/mlx/optimizers/optimizers.py lines 804-848 for the reference implementation.'
+    );
+
+    // This is what the implementation should look like once operations are available:
+    /*
+    const factored = gradient.shape.length >= 2;
+    const step = this.step;
+    const useFirstMoment = this.beta1 !== undefined;
+
+    // Compute parameter RMS: sqrt(mean(square(parameter)))
+    const parameterRms = this._computeRms(parameter);
+    
+    // Compute learning rate (relative or fixed)
+    const learningRate = this._computeLearningRate(step, parameterRms);
+    
+    // Compute beta2 (decay factor) based on step
+    // beta2 = 1 - (step+1)^decayRate where decayRate is typically -0.8
+    // With negative decayRate, (step+1)^(-0.8) decreases as steps increase,
+    // so beta2 increases toward 1, giving more weight to historical gradients over time
+    const stepValue = step.toTypedArray()[0] as number;
+    const beta2Scalar = 1.0 - Math.pow(stepValue + 1, this.decayRate);
+    
+    // Compute squared gradient + eps[0]
+    let update = add(square(gradient), this.eps[0]);
+
+    if (factored) {
+      // Factored second moment (for 2D+ tensors)
+      let expAvgSqRow = state.exp_avg_sq_row;
+      let expAvgSqCol = state.exp_avg_sq_col;
+      
+      // Update row: beta2 * row + (1-beta2) * mean(update, axis=-1)
+      const rowUpdate = mean(update, { axis: -1 });
+      expAvgSqRow = add(
+        multiply(beta2Scalar, expAvgSqRow),
+        multiply(1 - beta2Scalar, rowUpdate)
+      );
+      
+      // Update col: beta2 * col + (1-beta2) * mean(update, axis=-2)
+      const colUpdate = mean(update, { axis: -2 });
+      expAvgSqCol = add(
+        multiply(beta2Scalar, expAvgSqCol),
+        multiply(1 - beta2Scalar, colUpdate)
+      );
+      
+      state.exp_avg_sq_row = expAvgSqRow;
+      state.exp_avg_sq_col = expAvgSqCol;
+      
+      // Approximate full second moment from factored form
+      update = this._approximateExpMovingAvg(expAvgSqRow, expAvgSqCol);
+      update = multiply(update, gradient);
+    } else {
+      // Non-factored second moment (for 1D tensors)
+      let expAvgSq = state.exp_avg_sq;
+      expAvgSq = add(
+        multiply(beta2Scalar, expAvgSq),
+        multiply(1 - beta2Scalar, update)
+      );
+      state.exp_avg_sq = expAvgSq;
+      update = multiply(rsqrt(expAvgSq), gradient);
+    }
+
+    // Clip update by RMS
+    const updateRms = this._computeRms(update);
+    const clipFactor = divide(updateRms, this.clipThreshold);
+    const clipDivisor = maximum(1.0, clipFactor);
+    update = divide(update, clipDivisor);
+    
+    // Scale by learning rate
+    update = multiply(learningRate, update);
+
+    // Apply first moment (momentum) if enabled
+    if (useFirstMoment) {
+      let expAvg = state.exp_avg;
+      expAvg = add(
+        multiply(this.beta1!, expAvg),
+        multiply(1 - this.beta1!, update)
+      );
+      state.exp_avg = expAvg;
+      update = expAvg;
+    }
+
+    // Apply weight decay
+    let result = parameter;
+    if (this.weightDecay !== 0) {
+      const decay = multiply(-this.weightDecay, learningRate);
+      result = add(result, multiply(parameter, decay));
+    }
+    
+    return subtract(result, update);
+    */
+  }
+
+  /**
+   * Computes the root mean square of the input tensor.
+   * RMS = sqrt(mean(square(input)))
+   * 
+   * @private
+   */
+  private _computeRms(inputs: MLXArray): MLXArray {
+    // This requires mean operation which is not yet available
+    // return sqrt(mean(square(inputs)));
+    throw new Error('_computeRms requires mean operation');
+  }
+
+  /**
+   * Computes the learning rate for the current step.
+   * Uses relative step size if relativeStep is true, otherwise uses the configured learning rate.
+   * 
+   * @private
+   */
+  private _computeLearningRate(step: MLXArray, parameterRms: MLXArray): MLXArray {
+    let relativeStepSize: MLXArray;
+    
+    if (this.relativeStep) {
+      const stepValue = step.toTypedArray()[0] as number;
+      // For warmup_init, use step-dependent minimum (1e-6 * step) to gradually 
+      // increase learning rate during early training. Otherwise use constant 1e-2.
+      // relativeStepSize = min(min_step, 1/sqrt(step))
+      const minStep = this.warmupInit ? 1e-6 * stepValue : 1e-2;
+      relativeStepSize = minimum(minStep, rsqrt(step));
+    } else {
+      relativeStepSize = this.learningRate;
+    }
+
+    // Scale by parameter RMS if enabled
+    if (this.scaleParameter) {
+      const parameterScale = maximum(this.eps[1], parameterRms);
+      return multiply(parameterScale, relativeStepSize);
+    }
+    
+    return relativeStepSize;
+  }
+
+  /**
+   * Approximates the full exponential moving average from factored row and column averages.
+   * Uses outer product: (row / mean(row)) * (1 / sqrt(col))
+   * 
+   * @private
+   */
+  private _approximateExpMovingAvg(
+    expAvgSqRow: MLXArray,
+    expAvgSqCol: MLXArray
+  ): MLXArray {
+    // This requires mean, expandDims operations which are not yet available
+    // const rowMean = mean(expAvgSqRow, { axis: -1, keepdims: true });
+    // const rFactor = rsqrt(divide(expAvgSqRow, rowMean));
+    // const cFactor = rsqrt(expAvgSqCol);
+    // const rExpanded = expandDims(rFactor, { axis: -1 });
+    // const cExpanded = expandDims(cFactor, { axis: 0 });
+    // return matmul(rExpanded, cExpanded);
+    throw new Error('_approximateExpMovingAvg requires mean and expandDims operations');
+  }
+}
+
+/**
  * Filter function type - takes the full path and the associated leaf value
  * (e.g., a parameter or its gradient) and returns true if it should be
  * considered for the optimizer.
@@ -1318,6 +1611,7 @@ export default {
   Adagrad,
   AdaDelta,
   RMSprop,
+  Adafactor,
   MultiOptimizer,
   Muon,
 };

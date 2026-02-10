@@ -52,6 +52,8 @@ Reference source map: see `PORTING_PLAN.md` for the list of upstream C++ and Pyt
 - [x] Add `AdamW` optimizer.
 - [x] Add `Adagrad` optimizer (fully implemented with all required ops).
 - [x] Add `AdaDelta` optimizer (fully implemented with all required ops).
+- [x] Add `Adafactor` optimizer (structure and validation complete, blocked on missing mean operation).
+- [ ] Complete `Adafactor.applySingle()` implementation (requires mean with axis parameter, expandDims).
 - [ ] Add scheduler support (`mlx.optimizers.schedulers`).
 
 ## Tooling & Tests
