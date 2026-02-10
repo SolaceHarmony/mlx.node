@@ -152,6 +152,7 @@ The Node.js optimizer implementation follows the same design as Python MLX:
 | `SGD` gradient updates | ✅ | ⚠️ | Blocked on astype |
 | `Lion` optimizer | ✅ | ✅ | Complete |
 | `RMSprop` optimizer | ✅ | ✅ | Complete |
+| `Adafactor` optimizer | ✅ | ⚠️ | Structure complete, blocked on mean operation |
 | `MultiOptimizer` | ✅ | ✅ | Complete |
 | `Muon` optimizer | ✅ | ✅ | Complete |
 | Other optimizers (Adam, AdamW, Adagrad, etc.) | ✅ | ⚠️ | Partial (Adam structure exists) |
@@ -211,9 +212,11 @@ To complete optimizer functionality:
 4. ⚠️ **Complete SGD.applySingle()** - Blocked on missing astype operation
 5. ✅ **Lion optimizer** - DONE (fully implemented)
 6. ✅ **RMSprop optimizer** - DONE (fully implemented)
-7. ✅ **MultiOptimizer** - DONE (fully implemented with comprehensive tests)
-8. ⬜ **Implement other optimizers** - Adam, AdamW, Adagrad, etc.
-9. ⬜ **Integration tests** - Full gradient update testing
+7. ✅ **Adafactor optimizer structure** - DONE (structure complete, blocked on mean operation)
+8. ✅ **MultiOptimizer** - DONE (fully implemented with comprehensive tests)
+9. ⬜ **Complete Adafactor.applySingle()** - Blocked on mean(array, axis=N) operation
+10. ⬜ **Implement other optimizers** - Adam, AdamW, Adagrad, etc.
+11. ⬜ **Integration tests** - Full gradient update testing
 
 ## References
 

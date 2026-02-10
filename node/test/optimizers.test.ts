@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { SGD, Adam, AdamW, Adamax, Lion, Adagrad, RMSprop, Muon, Optimizer, MultiOptimizer } from '../src/optimizers';
+import { SGD, Adam, AdamW, Adamax, Lion, Adagrad, RMSprop, Adafactor, Muon, Optimizer, MultiOptimizer } from '../src/optimizers';
 import { zeros } from '../src/core/array';
 
 describe('mlx.optimizers', () => {
@@ -539,6 +539,153 @@ describe('mlx.optimizers', () => {
       optimizer.learningRate = 0.001;
       // Note: This test is placeholder since we can't properly set scalar values yet
       assert.ok(optimizer.learningRate);
+    });
+  });
+
+  describe('Adafactor', () => {
+    it('should create Adafactor optimizer with default settings', () => {
+      const optimizer = new Adafactor({});
+      assert.ok(optimizer instanceof Optimizer);
+      assert.ok(optimizer instanceof Adafactor);
+      assert.deepStrictEqual(optimizer.eps, [1e-30, 1e-3]);
+      assert.strictEqual(optimizer.clipThreshold, 1.0);
+      assert.strictEqual(optimizer.decayRate, -0.8);
+      assert.strictEqual(optimizer.beta1, undefined);
+      assert.strictEqual(optimizer.weightDecay, 0.0);
+      assert.strictEqual(optimizer.scaleParameter, true);
+      assert.strictEqual(optimizer.relativeStep, true);
+      assert.strictEqual(optimizer.warmupInit, false);
+    });
+
+    it('should create Adafactor optimizer with fixed learning rate', () => {
+      const optimizer = new Adafactor({
+        learningRate: 0.001,
+        relativeStep: false
+      });
+      assert.strictEqual(optimizer.relativeStep, false);
+      const lr = optimizer.learningRate;
+      assert.ok(lr);
+      assert.ok(lr.toTypedArray !== undefined);
+    });
+
+    it('should create Adafactor optimizer with custom epsilon', () => {
+      const optimizer = new Adafactor({
+        eps: [1e-25, 1e-2]
+      });
+      assert.deepStrictEqual(optimizer.eps, [1e-25, 1e-2]);
+    });
+
+    it('should create Adafactor optimizer with momentum (beta1)', () => {
+      const optimizer = new Adafactor({
+        learningRate: 0.001,
+        relativeStep: false,
+        beta1: 0.9
+      });
+      assert.strictEqual(optimizer.beta1, 0.9);
+    });
+
+    it('should create Adafactor optimizer with weight decay', () => {
+      const optimizer = new Adafactor({
+        learningRate: 0.001,
+        relativeStep: false,
+        weightDecay: 0.01
+      });
+      assert.strictEqual(optimizer.weightDecay, 0.01);
+    });
+
+    it('should create Adafactor optimizer with custom clip threshold', () => {
+      const optimizer = new Adafactor({
+        clipThreshold: 2.0
+      });
+      assert.strictEqual(optimizer.clipThreshold, 2.0);
+    });
+
+    it('should create Adafactor optimizer with warmup initialization', () => {
+      const optimizer = new Adafactor({
+        warmupInit: true
+      });
+      assert.strictEqual(optimizer.warmupInit, true);
+    });
+
+    it('should initialize state for 1D parameters (non-factored)', () => {
+      const optimizer = new Adafactor({ learningRate: 0.001, relativeStep: false });
+      const params = {
+        bias: zeros([10])  // 1D parameter
+      };
+
+      optimizer.init(params);
+
+      // Check that state was initialized
+      assert.ok(optimizer.state);
+      assert.ok('step' in optimizer.state);
+      assert.ok('learning_rate' in optimizer.state);
+      assert.ok('bias' in optimizer.state);
+
+      // For 1D parameters, should have exp_avg_sq (non-factored)
+      assert.ok('exp_avg_sq' in optimizer.state.bias);
+      assert.ok(!('exp_avg_sq_row' in optimizer.state.bias));
+      assert.ok(!('exp_avg_sq_col' in optimizer.state.bias));
+    });
+
+    it('should initialize state for 2D parameters (factored)', () => {
+      const optimizer = new Adafactor({ learningRate: 0.001, relativeStep: false });
+      const params = {
+        weight: zeros([10, 5])  // 2D parameter
+      };
+
+      optimizer.init(params);
+
+      // Check that state was initialized
+      assert.ok(optimizer.state);
+      assert.ok('step' in optimizer.state);
+      assert.ok('learning_rate' in optimizer.state);
+      assert.ok('weight' in optimizer.state);
+
+      // For 2D+ parameters, should have exp_avg_sq_row and exp_avg_sq_col (factored)
+      assert.ok('exp_avg_sq_row' in optimizer.state.weight);
+      assert.ok('exp_avg_sq_col' in optimizer.state.weight);
+      assert.ok(!('exp_avg_sq' in optimizer.state.weight));
+    });
+
+    it('should initialize first moment when beta1 is set', () => {
+      const optimizer = new Adafactor({
+        learningRate: 0.001,
+        relativeStep: false,
+        beta1: 0.9
+      });
+      const params = {
+        weight: zeros([3]),
+      };
+
+      optimizer.init(params);
+
+      // Should have exp_avg when beta1 is set
+      assert.ok('exp_avg' in optimizer.state.weight);
+    });
+
+    it('should track step count', () => {
+      const optimizer = new Adafactor({});
+      const step = optimizer.step;
+      assert.ok(step);
+      assert.strictEqual(step.toTypedArray()[0], 0);
+    });
+
+    it('should throw error when applying gradients (not yet implemented)', () => {
+      const optimizer = new Adafactor({ learningRate: 0.001, relativeStep: false });
+      const params = {
+        weight: zeros([3]),
+      };
+      const grads = {
+        weight: zeros([3]),
+      };
+
+      optimizer.init(params);
+
+      // applySingle should throw an error explaining missing operations
+      assert.throws(
+        () => optimizer.update(params, grads),
+        /not yet fully implemented/
+      );
     });
   });
 
