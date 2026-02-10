@@ -986,8 +986,9 @@ export class Adafactor extends Optimizer {
     const learningRate = this._computeLearningRate(step, parameterRms);
     
     // Compute beta2 (decay factor) based on step
-    const beta2Scalar = 1.0 - Math.pow(step.toTypedArray()[0], this.decayRate);
-    const beta2 = multiply(beta2Scalar, ones([], gradient.dtype));
+    // beta2 = 1 - (step+1)^decayRate where decayRate is typically -0.8
+    const stepValue = step.toTypedArray()[0] as number;
+    const beta2Scalar = 1.0 - Math.pow(stepValue + 1, this.decayRate);
     
     // Compute squared gradient + eps[0]
     let update = add(square(gradient), this.eps[0]);
@@ -1000,15 +1001,15 @@ export class Adafactor extends Optimizer {
       // Update row: beta2 * row + (1-beta2) * mean(update, axis=-1)
       const rowUpdate = mean(update, { axis: -1 });
       expAvgSqRow = add(
-        multiply(beta2, expAvgSqRow),
-        multiply(subtract(1, beta2), rowUpdate)
+        multiply(beta2Scalar, expAvgSqRow),
+        multiply(1 - beta2Scalar, rowUpdate)
       );
       
       // Update col: beta2 * col + (1-beta2) * mean(update, axis=-2)
       const colUpdate = mean(update, { axis: -2 });
       expAvgSqCol = add(
-        multiply(beta2, expAvgSqCol),
-        multiply(subtract(1, beta2), colUpdate)
+        multiply(beta2Scalar, expAvgSqCol),
+        multiply(1 - beta2Scalar, colUpdate)
       );
       
       state.exp_avg_sq_row = expAvgSqRow;
@@ -1021,8 +1022,8 @@ export class Adafactor extends Optimizer {
       // Non-factored second moment (for 1D tensors)
       let expAvgSq = state.exp_avg_sq;
       expAvgSq = add(
-        multiply(beta2, expAvgSq),
-        multiply(subtract(1, beta2), update)
+        multiply(beta2Scalar, expAvgSq),
+        multiply(1 - beta2Scalar, update)
       );
       state.exp_avg_sq = expAvgSq;
       update = multiply(rsqrt(expAvgSq), gradient);
@@ -1082,20 +1083,21 @@ export class Adafactor extends Optimizer {
     
     if (this.relativeStep) {
       const stepValue = step.toTypedArray()[0] as number;
+      // For warmup_init, use 1e-6 * step for small steps, otherwise use 1e-2 as minimum
+      // relativeStepSize = min(min_step, 1/sqrt(step))
       const minStep = this.warmupInit ? 1e-6 * stepValue : 1e-2;
-      // relativeStepSize = minimum(minStep, rsqrt(step))
       relativeStepSize = minimum(minStep, rsqrt(step));
     } else {
       relativeStepSize = this.learningRate;
     }
 
     // Scale by parameter RMS if enabled
-    let parameterScale = 1.0;
     if (this.scaleParameter) {
-      parameterScale = maximum(this.eps[1], parameterRms);
+      const parameterScale = maximum(this.eps[1], parameterRms);
+      return multiply(parameterScale, relativeStepSize);
     }
     
-    return multiply(parameterScale, relativeStepSize);
+    return relativeStepSize;
   }
 
   /**
