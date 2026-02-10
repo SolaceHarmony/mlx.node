@@ -987,6 +987,8 @@ export class Adafactor extends Optimizer {
     
     // Compute beta2 (decay factor) based on step
     // beta2 = 1 - (step+1)^decayRate where decayRate is typically -0.8
+    // With negative decayRate, (step+1)^(-0.8) decreases as steps increase,
+    // so beta2 increases toward 1, giving more weight to historical gradients over time
     const stepValue = step.toTypedArray()[0] as number;
     const beta2Scalar = 1.0 - Math.pow(stepValue + 1, this.decayRate);
     
@@ -1083,7 +1085,8 @@ export class Adafactor extends Optimizer {
     
     if (this.relativeStep) {
       const stepValue = step.toTypedArray()[0] as number;
-      // For warmup_init, use 1e-6 * step for small steps, otherwise use 1e-2 as minimum
+      // For warmup_init, use step-dependent minimum (1e-6 * step) to gradually 
+      // increase learning rate during early training. Otherwise use constant 1e-2.
       // relativeStepSize = min(min_step, 1/sqrt(step))
       const minStep = this.warmupInit ? 1e-6 * stepValue : 1e-2;
       relativeStepSize = minimum(minStep, rsqrt(step));
