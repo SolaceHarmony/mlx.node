@@ -70,6 +70,7 @@ import {
   where,
   arange,
   matmul,
+  normal,
   tan,
   sin,
   cos,
@@ -101,6 +102,7 @@ import {
   type BinaryOpOptions,
   type WhereOptions,
   type ArangeOptions,
+  type NormalOptions,
   type UnaryOpOptions,
 } from './ops';
 
@@ -122,6 +124,7 @@ export type {
   BinaryOpOptions,
   WhereOptions,
   ArangeOptions,
+  NormalOptions,
   UnaryOpOptions,
 } from './ops';
 export { MLXArray, MLXArray as Array, array };
@@ -158,6 +161,7 @@ export {
   where,
   arange,
   matmul,
+  normal,
   tan,
   sin,
   cos,
@@ -219,6 +223,7 @@ const core = {
   onesLike,
   full,
   arange,
+  normal,
   Array: MLXArray,
   Stream: MLXStream,
   defaultStream,

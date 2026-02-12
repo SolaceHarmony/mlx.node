@@ -2,6 +2,7 @@ import addon from '../internal/addon';
 import MLXArray, { normalizeShapeInput } from './array';
 import type { StreamLike } from './stream';
 import { toNativeStreamArgument } from './stream';
+import type { DTypeLike } from './dtype';
 
 function toNativeHandle(tensor: MLXArray): any {
   return tensor.toNative();
@@ -486,5 +487,76 @@ export function matmul(
   const args: any[] = [toNativeHandle(a), toNativeHandle(b)];
   appendStreamArg(args, options?.stream);
   const handle = addon.matmul(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export interface NormalOptions extends StreamOptions {
+  dtype?: DTypeLike;
+  loc?: number | MLXArray;
+  scale?: number | MLXArray;
+  key?: MLXArray;
+}
+
+/**
+ * Generate normally distributed random numbers.
+ * 
+ * Generates samples from a normal (Gaussian) distribution with specified mean and standard deviation.
+ * If `loc` and `scale` are not provided, generates from the standard normal distribution (mean=0, std=1).
+ * 
+ * @param shape - Shape of the output array
+ * @param options - Optional configuration including:
+ *   - dtype: Data type of the output (default: float32)
+ *   - loc: Mean of the distribution (default: 0)
+ *   - scale: Standard deviation of the distribution (default: 1)
+ *   - key: PRNG key for reproducible random numbers
+ *   - stream: Stream or device for computation
+ * @returns Array of normally distributed random numbers
+ * 
+ * @example
+ * ```typescript
+ * // Standard normal distribution (mean=0, std=1, dtype=float32)
+ * const x = mx.normal([2, 3]);
+ * 
+ * // Normal distribution with mean=5, std=2
+ * const y = mx.normal([2, 3], { loc: 5, scale: 2 });
+ * 
+ * // With explicit dtype
+ * const z = mx.normal([2, 3], { dtype: mx.float32, loc: 0, scale: 1 });
+ * ```
+ */
+export function normal(
+  shape: readonly number[],
+  options?: NormalOptions,
+): MLXArray {
+  const normalizedShape = normalizeShapeInput(shape);
+  const args: any[] = [normalizedShape];
+  
+  if (options?.dtype !== undefined) {
+    args.push(options.dtype);
+  }
+  
+  if (options?.loc !== undefined) {
+    if (options.loc instanceof MLXArray) {
+      args.push(toNativeHandle(options.loc));
+    } else {
+      args.push(options.loc);
+    }
+  }
+  
+  if (options?.scale !== undefined) {
+    if (options.scale instanceof MLXArray) {
+      args.push(toNativeHandle(options.scale));
+    } else {
+      args.push(options.scale);
+    }
+  }
+  
+  if (options?.key !== undefined) {
+    args.push(toNativeHandle(options.key));
+  }
+  
+  appendStreamArg(args, options?.stream);
+  
+  const handle = addon.normal(...args);
   return MLXArray.fromHandle(handle);
 }

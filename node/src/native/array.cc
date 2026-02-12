@@ -2797,6 +2797,112 @@ Napi::Value CPUSanity(const Napi::CallbackInfo& info) {
   }
 }
 
+Napi::Value Normal(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+  if (addon == nullptr) {
+    Napi::Error::New(env, "AddonData missing for normal")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  try {
+    mlx::node::Runtime::Instance().EnsureMetalInit();
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  
+  // Parse shape (required)
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "normal expects a shape array")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto shape = ParseShapeArgument(env, info[0]);
+  if (env.IsExceptionPending()) {
+    return env.Null();
+  }
+  
+  // Parse optional dtype (default: float32)
+  // Signature: normal(shape, dtype?, loc?, scale?, key?, stream?)
+  auto dtype = mlx::core::float32;
+  size_t argIndex = 1;
+  if (info.Length() > argIndex && IsDtypeArg(env, info[argIndex], *addon)) {
+    dtype = MaybeParseDtype(env, info[argIndex], dtype, *addon);
+    if (env.IsExceptionPending()) {
+      return env.Null();
+    }
+    argIndex++;
+  }
+  
+  // Helper to check if arg is an MLX array
+  auto isArray = [&](size_t idx) -> bool {
+    if (info.Length() <= idx || !info[idx].IsObject()) {
+      return false;
+    }
+    auto obj = info[idx].As<Napi::Object>();
+    auto ctor = addon->array_constructor.Value();
+    return !ctor.IsEmpty() && obj.InstanceOf(ctor);
+  };
+  
+  // Helper to parse scalar or array
+  auto parseScalarOrArray = [&](size_t idx) -> std::optional<mlx::core::array> {
+    if (info.Length() <= idx || info[idx].IsUndefined() || info[idx].IsNull()) {
+      return std::nullopt;
+    }
+    if (isArray(idx)) {
+      auto obj = info[idx].As<Napi::Object>();
+      const auto* wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(obj);
+      if (wrapper) {
+        return wrapper->tensor();
+      }
+    } else if (info[idx].IsNumber()) {
+      double val = info[idx].As<Napi::Number>().DoubleValue();
+      return mlx::core::array(val, dtype);
+    }
+    return std::nullopt;
+  };
+  
+  // Parse optional loc (mean)
+  std::optional<mlx::core::array> loc;
+  if (info.Length() > argIndex && 
+      (info[argIndex].IsNumber() || isArray(argIndex))) {
+    loc = parseScalarOrArray(argIndex);
+    argIndex++;
+  }
+  
+  // Parse optional scale (std dev)
+  std::optional<mlx::core::array> scale;
+  if (info.Length() > argIndex && 
+      (info[argIndex].IsNumber() || isArray(argIndex))) {
+    scale = parseScalarOrArray(argIndex);
+    argIndex++;
+  }
+  
+  // Parse optional key
+  std::optional<mlx::core::array> key;
+  if (info.Length() > argIndex && isArray(argIndex)) {
+    key = parseScalarOrArray(argIndex);
+    argIndex++;
+  }
+  
+  // If key not provided, use default KeySequence
+  if (!key.has_value()) {
+    key = mlx::core::random::KeySequence::default_().next();
+  }
+  
+  // Parse optional stream
+  auto streamArg = GetStreamArgument(info, argIndex);
+  if (env.IsExceptionPending()) {
+    return env.Null();
+  }
+  
+  // Call mlx::core::random::normal
+  auto result = std::make_shared<mlx::core::array>(
+      mlx::core::random::normal(shape, dtype, loc, scale, key, streamArg));
+  return WrapArray(env, result);
+}
+
 } // namespace
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -2832,6 +2938,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   core.Set("moveaxis", Napi::Function::New(env, MoveAxis, "moveaxis", &data));
   core.Set("swapaxes", Napi::Function::New(env, SwapAxes, "swapaxes", &data));
   core.Set("arange", Napi::Function::New(env, Arange, "arange", &data));
+  core.Set("normal", Napi::Function::New(env, Normal, "normal", &data));
   core.Set("add", Napi::Function::New(env, Add, "add", &data));
   core.Set("multiply", Napi::Function::New(env, Multiply, "multiply", &data));
   core.Set("subtract", Napi::Function::New(env, Subtract, "subtract", &data));
