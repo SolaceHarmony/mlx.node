@@ -91,7 +91,7 @@ export function orthogonal(
     const shape = a.shape;
     if (shape.length !== 2) {
       throw new Error(
-        `Orthogonal initialization requires a 2D array but got a ${shape.length}D array.`
+        `orthogonal initialization requires a 2D array but got a ${shape.length}D array.`
       );
     }
 
