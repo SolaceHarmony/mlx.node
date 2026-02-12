@@ -3021,6 +3021,10 @@ Napi::Value Sparse(const Napi::CallbackInfo& info) {
     order = mlx::core::eval(order);
     result = mlx::core::eval(result);
     
+    // Note: MLX doesn't have easy advanced indexing in C++ (like Python's a[indices] = 0)
+    // So we evaluate the arrays, modify the data in memory, and create a new array.
+    // This is less efficient than pure MLX operations but necessary without scatter operations.
+    
     // Get raw data pointers
     const int* order_ptr = order.data<int>();
     
@@ -3029,11 +3033,13 @@ Napi::Value Sparse(const Napi::CallbackInfo& info) {
     result_vec.reserve(rows * cols);
     
     // Copy result data to vector based on dtype
+    // TODO: Support other dtypes (float16, bfloat16, etc.)
     if (a.dtype() == mlx::core::float32) {
       const float* result_ptr = result.data<float>();
       result_vec.assign(result_ptr, result_ptr + rows * cols);
       
-      // Zero out the selected elements
+      // Zero out the selected elements based on argsort order
+      // For each row, zero out the first num_zeros elements according to random order
       for (int row = 0; row < rows; row++) {
         for (int j = 0; j < num_zeros; j++) {
           int col = order_ptr[row * cols + j];
