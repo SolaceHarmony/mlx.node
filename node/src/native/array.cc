@@ -2989,10 +2989,15 @@ Napi::Value Sparse(const Napi::CallbackInfo& info) {
   }
 
   // Parse stream (last argument if present and not a number)
-  auto stream = mlx::core::default_stream(mlx::core::default_device());
+  mlx::core::Stream stream;
+  bool has_stream = false;
   if (info.Length() > next_arg) {
     stream = mlx::node::ParseStreamOrDevice(env, info[next_arg], *addon);
     if (env.IsExceptionPending()) return env.Null();
+    has_stream = true;
+  }
+  if (!has_stream) {
+    stream = mlx::core::default_stream(mlx::core::default_device());
   }
 
   try {
@@ -3038,7 +3043,9 @@ Napi::Value Sparse(const Napi::CallbackInfo& info) {
     result_vec.reserve(rows * cols);
     
     // Copy result data to vector based on dtype
-    // TODO: Support other dtypes (float16, bfloat16, etc.)
+    // TODO: Support other dtypes (float16, bfloat16, int types, etc.)
+    // This requires template specialization or switch-case for each dtype's data<T>() call
+    // and appropriate handling of zero values for each type.
     if (a.dtype() == mlx::core::float32) {
       const float* result_ptr = result.data<float>();
       result_vec.assign(result_ptr, result_ptr + rows * cols);

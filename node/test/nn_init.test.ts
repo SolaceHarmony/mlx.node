@@ -108,8 +108,18 @@ describe('mlx.nn_init', () => {
       const data = toArray(result);
       const nonZeroData = data.filter(x => x !== 0);
 
+      // Check that non-zero values are roughly centered around mean
+      // Using standard error of the mean: SE = std / sqrt(n)
+      // With 90 non-zero values (10 rows * 9 non-zero per row), SE ~ 0.21
+      // Use 3 standard errors for 99.7% confidence (avoiding flaky tests)
       const avg = nonZeroData.reduce((a, b) => a + b, 0) / nonZeroData.length;
-      assert.ok(Math.abs(avg - mean) < std, `Average ${avg} should be close to mean ${mean}`);
+      const standardError = std / Math.sqrt(nonZeroData.length);
+      const tolerance = 3 * standardError;
+
+      assert.ok(
+        Math.abs(avg - mean) < tolerance,
+        `Average ${avg} should be within ${tolerance} of mean ${mean} (standard error: ${standardError})`
+      );
     });
 
     it('should throw error for non-2D arrays', () => {
