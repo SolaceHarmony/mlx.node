@@ -1,4 +1,4 @@
-import addon from './internal/addon';
+import addon, { nn_init } from './internal/addon';
 import * as utils from './utils';
 import * as core from './core';
 import * as streaming from './streaming';
