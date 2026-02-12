@@ -488,3 +488,69 @@ export function matmul(
   const handle = addon.matmul(...args);
   return MLXArray.fromHandle(handle);
 }
+
+export interface NormalOptions extends StreamOptions {
+  dtype?: any;
+  loc?: number | MLXArray;
+  scale?: number | MLXArray;
+  key?: MLXArray;
+}
+
+/**
+ * Generate normally distributed random numbers.
+ * 
+ * Generates samples from a normal (Gaussian) distribution with specified mean and standard deviation.
+ * If `loc` and `scale` are not provided, generates from the standard normal distribution (mean=0, std=1).
+ * 
+ * @param shape - Shape of the output array
+ * @param options - Optional configuration including dtype, loc (mean), scale (std dev), key (PRNG key), and stream
+ * @returns Array of normally distributed random numbers
+ * 
+ * @example
+ * ```typescript
+ * // Standard normal distribution
+ * const x = mx.random.normal([2, 3]);
+ * 
+ * // Normal distribution with mean=5, std=2
+ * const y = mx.random.normal([2, 3], { loc: 5, scale: 2 });
+ * 
+ * // With explicit dtype
+ * const z = mx.random.normal([2, 3], { dtype: mx.float32, loc: 0, scale: 1 });
+ * ```
+ */
+export function normal(
+  shape: readonly number[],
+  options?: NormalOptions,
+): MLXArray {
+  const normalizedShape = normalizeShapeInput(shape);
+  const args: any[] = [normalizedShape];
+  
+  if (options?.dtype !== undefined) {
+    args.push(options.dtype);
+  }
+  
+  if (options?.loc !== undefined) {
+    if (options.loc instanceof MLXArray) {
+      args.push(toNativeHandle(options.loc));
+    } else {
+      args.push(options.loc);
+    }
+  }
+  
+  if (options?.scale !== undefined) {
+    if (options.scale instanceof MLXArray) {
+      args.push(toNativeHandle(options.scale));
+    } else {
+      args.push(options.scale);
+    }
+  }
+  
+  if (options?.key !== undefined) {
+    args.push(toNativeHandle(options.key));
+  }
+  
+  appendStreamArg(args, options?.stream);
+  
+  const handle = addon.normal(...args);
+  return MLXArray.fromHandle(handle);
+}

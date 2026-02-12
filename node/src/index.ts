@@ -52,6 +52,7 @@ export const {
   minimum,
   where,
   arange,
+  normal,
   tan,
   sin,
   cos,
