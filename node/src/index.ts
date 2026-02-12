@@ -4,6 +4,7 @@ import * as core from './core';
 import * as streaming from './streaming';
 import * as react from './react';
 import * as optimizers from './optimizers';
+import * as nn_init from './nn_init';
 
 // Native addon utilities
 export const native = {
@@ -11,7 +12,7 @@ export const native = {
 };
 
 // Export namespaces for organized access
-export { core, utils, streaming, react, optimizers };
+export { core, utils, streaming, react, optimizers, nn_init };
 
 // Convenience re-exports from core (TypeScript idiomatic style)
 // Usage: import { array, zeros } from 'mlx';
