@@ -2,6 +2,7 @@ import addon from '../internal/addon';
 import MLXArray, { normalizeShapeInput } from './array';
 import type { StreamLike } from './stream';
 import { toNativeStreamArgument } from './stream';
+import type { DTypeLike } from './dtype';
 
 function toNativeHandle(tensor: MLXArray): any {
   return tensor.toNative();
@@ -490,7 +491,7 @@ export function matmul(
 }
 
 export interface NormalOptions extends StreamOptions {
-  dtype?: any;
+  dtype?: DTypeLike;
   loc?: number | MLXArray;
   scale?: number | MLXArray;
   key?: MLXArray;
@@ -503,19 +504,24 @@ export interface NormalOptions extends StreamOptions {
  * If `loc` and `scale` are not provided, generates from the standard normal distribution (mean=0, std=1).
  * 
  * @param shape - Shape of the output array
- * @param options - Optional configuration including dtype, loc (mean), scale (std dev), key (PRNG key), and stream
+ * @param options - Optional configuration including:
+ *   - dtype: Data type of the output (default: float32)
+ *   - loc: Mean of the distribution (default: 0)
+ *   - scale: Standard deviation of the distribution (default: 1)
+ *   - key: PRNG key for reproducible random numbers
+ *   - stream: Stream or device for computation
  * @returns Array of normally distributed random numbers
  * 
  * @example
  * ```typescript
- * // Standard normal distribution
- * const x = mx.random.normal([2, 3]);
+ * // Standard normal distribution (mean=0, std=1, dtype=float32)
+ * const x = mx.normal([2, 3]);
  * 
  * // Normal distribution with mean=5, std=2
- * const y = mx.random.normal([2, 3], { loc: 5, scale: 2 });
+ * const y = mx.normal([2, 3], { loc: 5, scale: 2 });
  * 
  * // With explicit dtype
- * const z = mx.random.normal([2, 3], { dtype: mx.float32, loc: 0, scale: 1 });
+ * const z = mx.normal([2, 3], { dtype: mx.float32, loc: 0, scale: 1 });
  * ```
  */
 export function normal(
