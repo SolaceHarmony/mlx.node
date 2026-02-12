@@ -6,7 +6,8 @@
  */
 
 import MLXArray from '../core/array';
-import { Dtype, float32 } from '../core/dtype';
+import type { MLXDtype } from '../core/dtype';
+import { float32 } from '../core/dtype';
 
 /**
  * Initializer function type that takes an array and returns an initialized array.
@@ -58,7 +59,7 @@ export type Initializer = (array: MLXArray) => MLXArray;
  */
 export function orthogonal(
   gain: number = 1.0,
-  dtype: Dtype = float32
+  dtype: MLXDtype = float32
 ): Initializer {
   return (a: MLXArray): MLXArray => {
     // Validate input is 2D
