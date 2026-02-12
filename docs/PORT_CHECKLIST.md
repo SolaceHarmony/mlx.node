@@ -54,7 +54,10 @@ Math & special ops
 
 Random & initialization
 -----------------------
-- [ ] random.* coverage (if exposed in Python MLX)
+- [x] random.normal(shape, dtype=float32, loc=None, scale=None, key=None, *, stream) — C++ binding
+- [x] nn.init.glorot_normal(dtype=float32) — TypeScript implementation
+- [ ] random.uniform, random.randint, etc. — additional random ops
+- [ ] nn.init.glorot_uniform, he_normal, he_uniform — additional initializers
 
 Device & memory
 ---------------
