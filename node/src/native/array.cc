@@ -2769,6 +2769,170 @@ Napi::Value GPUSanity(const Napi::CallbackInfo& info) {
   }
 }
 
+// Random functions
+Napi::Value RandomUniform(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+  
+  try {
+    mlx::node::Runtime::Instance().EnsureMetalInit();
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  
+  // Parse arguments: uniform(low, high, shape, dtype?, stream?)
+  // uniform(shape, dtype?, stream?) - for [0, 1) range
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "random.uniform requires at least 1 argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  
+  try {
+    mlx::core::array low;
+    mlx::core::array high;
+    std::vector<int> shape;
+    mlx::core::Dtype dtype = mlx::core::float32;
+    int shapeArgIdx = 0;
+    
+    // Check if first two arguments are numbers (low, high variant)
+    if (info.Length() >= 2 && (info[0].IsNumber() || IsArray(env, info[0])) &&
+        (info[1].IsNumber() || IsArray(env, info[1]))) {
+      // uniform(low, high, shape, ...)
+      low = ToArray(env, info[0]);
+      if (env.IsExceptionPending()) return env.Null();
+      high = ToArray(env, info[1]);
+      if (env.IsExceptionPending()) return env.Null();
+      shapeArgIdx = 2;
+    } else {
+      // uniform(shape, ...) - defaults to [0, 1)
+      low = mlx::core::array(0.0f);
+      high = mlx::core::array(1.0f);
+      shapeArgIdx = 0;
+    }
+    
+    // Parse shape
+    if (info.Length() <= shapeArgIdx || !info[shapeArgIdx].IsArray()) {
+      Napi::TypeError::New(env, "shape must be an array")
+          .ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    
+    auto shapeArray = info[shapeArgIdx].As<Napi::Array>();
+    for (uint32_t i = 0; i < shapeArray.Length(); i++) {
+      Napi::Value val = shapeArray[i];
+      if (!val.IsNumber()) {
+        Napi::TypeError::New(env, "shape elements must be numbers")
+            .ThrowAsJavaScriptException();
+        return env.Null();
+      }
+      shape.push_back(val.As<Napi::Number>().Int32Value());
+    }
+    
+    // Parse optional dtype
+    int dtypeArgIdx = shapeArgIdx + 1;
+    if (info.Length() > dtypeArgIdx && IsDtypeArg(env, info[dtypeArgIdx], *addon)) {
+      dtype = MaybeParseDtype(env, info[dtypeArgIdx], mlx::core::float32, *addon);
+      if (env.IsExceptionPending()) return env.Null();
+    }
+    
+    // Parse stream
+    auto stream = mlx::core::default_stream(mlx::core::default_device());
+    if (info.Length() > dtypeArgIdx + 1) {
+      stream = mlx::node::ParseStreamOrDevice(env, info[info.Length() - 1], *addon);
+      if (env.IsExceptionPending()) return env.Null();
+    }
+    
+    auto result = mlx::core::random::uniform(low, high, shape, dtype, std::nullopt, stream);
+    return WrapArray(env, std::make_shared<mlx::core::array>(std::move(result)));
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, std::string("random.uniform failed: ") + e.what())
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+}
+
+Napi::Value RandomNormal(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+  
+  try {
+    mlx::node::Runtime::Instance().EnsureMetalInit();
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  
+  // Parse arguments: normal(shape, dtype?, loc?, scale?, stream?)
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "random.normal requires at least 1 argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  
+  try {
+    // Parse shape
+    if (!info[0].IsArray()) {
+      Napi::TypeError::New(env, "shape must be an array")
+          .ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    
+    std::vector<int> shape;
+    auto shapeArray = info[0].As<Napi::Array>();
+    for (uint32_t i = 0; i < shapeArray.Length(); i++) {
+      Napi::Value val = shapeArray[i];
+      if (!val.IsNumber()) {
+        Napi::TypeError::New(env, "shape elements must be numbers")
+            .ThrowAsJavaScriptException();
+        return env.Null();
+      }
+      shape.push_back(val.As<Napi::Number>().Int32Value());
+    }
+    
+    mlx::core::Dtype dtype = mlx::core::float32;
+    std::optional<mlx::core::array> loc = std::nullopt;
+    std::optional<mlx::core::array> scale = std::nullopt;
+    
+    // Parse optional arguments (dtype, loc, scale)
+    int argIdx = 1;
+    
+    // Check for dtype
+    if (info.Length() > argIdx && IsDtypeArg(env, info[argIdx], *addon)) {
+      dtype = MaybeParseDtype(env, info[argIdx], mlx::core::float32, *addon);
+      if (env.IsExceptionPending()) return env.Null();
+      argIdx++;
+    }
+    
+    // Check for loc (mean)
+    if (info.Length() > argIdx && info[argIdx].IsNumber()) {
+      loc = mlx::core::array(info[argIdx].As<Napi::Number>().DoubleValue());
+      argIdx++;
+    }
+    
+    // Check for scale (std)
+    if (info.Length() > argIdx && info[argIdx].IsNumber()) {
+      scale = mlx::core::array(info[argIdx].As<Napi::Number>().DoubleValue());
+      argIdx++;
+    }
+    
+    // Parse stream
+    auto stream = mlx::core::default_stream(mlx::core::default_device());
+    if (info.Length() > argIdx) {
+      stream = mlx::node::ParseStreamOrDevice(env, info[info.Length() - 1], *addon);
+      if (env.IsExceptionPending()) return env.Null();
+    }
+    
+    auto result = mlx::core::random::normal(shape, dtype, loc, scale, std::nullopt, stream);
+    return WrapArray(env, std::make_shared<mlx::core::array>(std::move(result)));
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, std::string("random.normal failed: ") + e.what())
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+}
+
 Napi::Value CPUSanity(const Napi::CallbackInfo& info) {
   auto env = info.Env();
   try {
@@ -3150,7 +3314,13 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   // NN init functions
   Napi::Object nn_init = Napi::Object::New(env);
   nn_init.Set("sparse", Napi::Function::New(env, Sparse, "sparse", &data));
-  
+
+  // Random operations under core.random (matches mlx.core.random.*)
+  Napi::Object random = Napi::Object::New(env);
+  random.Set("uniform", Napi::Function::New(env, RandomUniform, "uniform", &data));
+  random.Set("normal", Napi::Function::New(env, Normal, "normal", &data));
+  core.Set("random", random);
+
   // (already initialized dtype/streams above)
 
   mlx.Set("core", core);
