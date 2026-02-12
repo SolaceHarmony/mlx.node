@@ -20,10 +20,8 @@
     "index.js",
     "build/Release/mlx.node"
   ],
-  "devDependencies": {
-    "@types/mocha": "^10.0.10",
+  "dependencies": {
     "@types/node": "^25.2.3",
-    "mocha": "^11.7.5",
     "typescript": "^5.9.3"
   }
 }

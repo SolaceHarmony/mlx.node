@@ -1,6 +1,6 @@
 import addon from '../internal/addon';
 import MLXArray from '../core/array';
-import type { DTypeLike } from '../core/dtype';
+import type { DTypeKey } from '../core/dtype';
 import type { StreamLike } from '../core/stream';
 
 /**
@@ -17,13 +17,13 @@ export function uniform(
   low: number | number[],
   high?: number | number[],
   shape?: number[],
-  dtype?: DTypeLike,
+  dtype?: DTypeKey,
   stream?: StreamLike
 ): MLXArray;
 
 export function uniform(
   shape: number[],
-  dtype?: DTypeLike,
+  dtype?: DTypeKey,
   stream?: StreamLike
 ): MLXArray;
 
@@ -53,7 +53,7 @@ export function uniform(...args: any[]): MLXArray {
  */
 export function normal(
   shape: number[],
-  dtype?: DTypeLike,
+  dtype?: DTypeKey,
   loc?: number,
   scale?: number,
   stream?: StreamLike

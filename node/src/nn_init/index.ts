@@ -6,7 +6,7 @@
  */
 
 import MLXArray, { full } from '../core/array';
-import type { MLXDtype, DTypeLike } from '../core/dtype';
+import type { MLXDtype, DTypeKey } from '../core/dtype';
 import { float32 } from '../core/dtype';
 import * as random from '../random';
 
@@ -84,7 +84,7 @@ export function constant(
  * @returns An initializer function that takes an array and optional gain parameter
  */
 export function glorot_uniform(
-  dtype: DTypeLike = 'float32'
+  dtype: DTypeKey = 'float32'
 ): (arr: MLXArray, gain?: number) => MLXArray {
   return function initializer(arr: MLXArray, gain: number = 1.0): MLXArray {
     const [fanIn, fanOut] = calculateFanInFanOut(arr);
@@ -106,7 +106,7 @@ export function glorot_uniform(
  * @returns An initializer function that takes an array and optional gain parameter
  */
 export function glorot_normal(
-  dtype: DTypeLike = 'float32'
+  dtype: DTypeKey = 'float32'
 ): (arr: MLXArray, gain?: number) => MLXArray {
   return function initializer(arr: MLXArray, gain: number = 1.0): MLXArray {
     const [fanIn, fanOut] = calculateFanInFanOut(arr);
@@ -126,7 +126,7 @@ export function glorot_normal(
 export function normal(
   mean: number = 0.0,
   std: number = 1.0,
-  dtype: DTypeLike = 'float32'
+  dtype: DTypeKey = 'float32'
 ): (arr: MLXArray) => MLXArray {
   return function initializer(arr: MLXArray): MLXArray {
     return random.normal(arr.shape, dtype, mean, std);
@@ -144,7 +144,7 @@ export function normal(
 export function uniform(
   low: number = 0.0,
   high: number = 1.0,
-  dtype: DTypeLike = 'float32'
+  dtype: DTypeKey = 'float32'
 ): (arr: MLXArray) => MLXArray {
   return function initializer(arr: MLXArray): MLXArray {
     return random.uniform(low, high, arr.shape, dtype);
