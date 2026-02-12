@@ -2911,6 +2911,10 @@ Napi::Value Normal(const Napi::CallbackInfo& info) {
  * 1. Filling with samples from a normal distribution
  * 2. Randomly setting a fraction of elements in each row to zero
  *
+ * Note: The Python documentation says "per column" but the actual implementation
+ * (both Python and this C++ version) applies sparsity per row: each row gets
+ * num_zeros elements zeroed, where num_zeros = ceil(sparsity * num_columns).
+ *
  * Args:
  *   - a: Input array (must be 2D)
  *   - sparsity: Fraction of columns to zero out in each row (0.0-1.0)
@@ -2996,7 +3000,8 @@ Napi::Value Sparse(const Napi::CallbackInfo& info) {
     int rows = a.shape(0);
     int cols = a.shape(1);
     
-    // Calculate number of zeros per column
+    // Calculate number of zeros per row
+    // (Despite docs saying "per column", this is actually per row in the implementation)
     int num_zeros = static_cast<int>(std::ceil(sparsity * static_cast<float>(cols)));
 
     // Generate random order for each element (argsort of uniform random values)
