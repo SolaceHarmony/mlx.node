@@ -2796,9 +2796,9 @@ Napi::Value RandomUniform(const Napi::CallbackInfo& info) {
     mlx::core::Dtype dtype = mlx::core::float32;
     int shapeArgIdx = 0;
     
-    // Check if first two arguments are numbers (low, high variant)
-    if (info.Length() >= 2 && (info[0].IsNumber() || IsArray(env, info[0])) &&
-        (info[1].IsNumber() || IsArray(env, info[1]))) {
+    // Check if first two arguments are numbers/arrays (low, high variant)
+    if (info.Length() >= 2 && (info[0].IsNumber() || info[0].IsObject()) &&
+        (info[1].IsNumber() || info[1].IsObject())) {
       // uniform(low, high, shape, ...)
       low = ToArray(env, info[0]);
       if (env.IsExceptionPending()) return env.Null();
