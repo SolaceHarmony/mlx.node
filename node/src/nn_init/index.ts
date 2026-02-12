@@ -1,6 +1,6 @@
 import MLXArray, { full } from '../core/array';
 import type { DTypeLike } from '../core/dtype';
-import { float32 } from '../core/dtype';
+import { float32, type MLXDtype } from '../core/dtype';
 
 /**
  * An initializer that returns an array filled with `value`.
@@ -19,9 +19,10 @@ import { float32 } from '../core/dtype';
  */
 export function constant(
   value: number,
-  dtype: DTypeLike = float32
+  dtype?: MLXDtype
 ): (a: MLXArray) => MLXArray {
+  const dtypeToUse = dtype ?? float32;
   return (a: MLXArray): MLXArray => {
-    return full(a.shape, value, dtype);
+    return full(a.shape, value, dtypeToUse);
   };
 }

@@ -37,7 +37,7 @@ describe('nn_init.constant', () => {
     const result = initFn(input);
     
     assert.equal(result.dtype, 'int32');
-    const data = result.toInt32Array();
+    const data = result.toTypedArray() as Int32Array;
     assert.equal(data.length, 6);
     for (let i = 0; i < data.length; i++) {
       assert.equal(data[i], 3);
