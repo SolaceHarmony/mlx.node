@@ -164,4 +164,143 @@ describe('mlx.nn_init', () => {
       assert.strictEqual(zeroCount, 3 * 4);
     });
   });
+
+  describe('glorot_uniform', () => {
+    it('should create an initializer function', () => {
+      const initFn = mx.nn_init.glorot_uniform();
+      assert.strictEqual(typeof initFn, 'function');
+    });
+
+    it('should initialize 2D arrays', () => {
+      const initFn = mx.nn_init.glorot_uniform();
+      const weights = mx.zeros([3, 3]);
+      const result = initFn(weights);
+
+      assert.strictEqual(result.shape.length, 2);
+      assert.strictEqual(result.shape[0], 3);
+      assert.strictEqual(result.shape[1], 3);
+    });
+
+    it('should initialize 3D arrays (conv weights)', () => {
+      const initFn = mx.nn_init.glorot_uniform();
+      const weights = mx.zeros([3, 3, 3]);
+      const result = initFn(weights);
+
+      assert.strictEqual(result.shape.length, 3);
+      assert.strictEqual(result.shape[0], 3);
+      assert.strictEqual(result.shape[1], 3);
+      assert.strictEqual(result.shape[2], 3);
+    });
+
+    it('should accept gain parameter', () => {
+      const initFn = mx.nn_init.glorot_uniform();
+      const weights = mx.zeros([2, 2]);
+      const result = initFn(weights, 4.0);
+
+      assert.strictEqual(result.shape.length, 2);
+      assert.strictEqual(result.shape[0], 2);
+      assert.strictEqual(result.shape[1], 2);
+    });
+
+    it('should throw error for 1D arrays', () => {
+      const initFn = mx.nn_init.glorot_uniform();
+      const weights = mx.zeros([5]);
+
+      assert.throws(() => {
+        initFn(weights);
+      }, /requires at least 2 dimensional input/);
+    });
+
+    it('should handle different fan-in and fan-out', () => {
+      const initFn = mx.nn_init.glorot_uniform();
+      const weights = mx.zeros([64, 32]);
+      const result = initFn(weights);
+
+      assert.strictEqual(result.shape[0], 64);
+      assert.strictEqual(result.shape[1], 32);
+    });
+  });
+
+  describe('glorot_normal', () => {
+    it('should create an initializer function', () => {
+      const initFn = mx.nn_init.glorot_normal();
+      assert.strictEqual(typeof initFn, 'function');
+    });
+
+    it('should initialize 2D arrays', () => {
+      const initFn = mx.nn_init.glorot_normal();
+      const weights = mx.zeros([3, 3]);
+      const result = initFn(weights);
+
+      assert.strictEqual(result.shape.length, 2);
+      assert.strictEqual(result.shape[0], 3);
+      assert.strictEqual(result.shape[1], 3);
+    });
+
+    it('should accept gain parameter', () => {
+      const initFn = mx.nn_init.glorot_normal();
+      const weights = mx.zeros([2, 2]);
+      const result = initFn(weights, 4.0);
+
+      assert.strictEqual(result.shape.length, 2);
+    });
+
+    it('should throw error for 1D arrays', () => {
+      const initFn = mx.nn_init.glorot_normal();
+      const weights = mx.zeros([5]);
+
+      assert.throws(() => {
+        initFn(weights);
+      }, /requires at least 2 dimensional input/);
+    });
+  });
+
+  describe('constant', () => {
+    it('should create an initializer that fills with constant value', () => {
+      const initFn = mx.nn_init.constant(5.0);
+      const arr = mx.zeros([2, 2]);
+      const result = initFn(arr);
+
+      assert.strictEqual(result.shape[0], 2);
+      assert.strictEqual(result.shape[1], 2);
+    });
+  });
+
+  describe('normal', () => {
+    it('should create an initializer with normal distribution', () => {
+      const initFn = mx.nn_init.normal();
+      const arr = mx.zeros([3, 3]);
+      const result = initFn(arr);
+
+      assert.strictEqual(result.shape[0], 3);
+      assert.strictEqual(result.shape[1], 3);
+    });
+
+    it('should accept mean and std parameters', () => {
+      const initFn = mx.nn_init.normal(5.0, 2.0);
+      const arr = mx.zeros([2, 2]);
+      const result = initFn(arr);
+
+      assert.strictEqual(result.shape[0], 2);
+    });
+  });
+
+  describe('uniform', () => {
+    it('should create an initializer with uniform distribution', () => {
+      const initFn = mx.nn_init.uniform();
+      const arr = mx.zeros([3, 3]);
+      const result = initFn(arr);
+
+      assert.strictEqual(result.shape[0], 3);
+      assert.strictEqual(result.shape[1], 3);
+    });
+
+    it('should accept low and high parameters', () => {
+      const initFn = mx.nn_init.uniform(-1.0, 1.0);
+      const arr = mx.zeros([2, 2]);
+      const result = initFn(arr);
+
+      assert.strictEqual(result.shape[0], 2);
+    });
+  });
 });
