@@ -17,6 +17,7 @@
 #include "mlx/dtype_utils.h"
 #include "mlx/mlx.h"
 #include "mlx/ops.h"
+#include "mlx/random.h"
 #include "mlx_bridge.h"
 
 #include "dtype.h"
@@ -2811,7 +2812,7 @@ Napi::Value Normal(const Napi::CallbackInfo& info) {
     Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
     return env.Null();
   }
-  
+
   // Parse shape (required)
   if (info.Length() < 1) {
     Napi::TypeError::New(env, "normal expects a shape array")
@@ -2903,6 +2904,183 @@ Napi::Value Normal(const Napi::CallbackInfo& info) {
   return WrapArray(env, result);
 }
 
+/**
+ * Sparse initializer for neural network weights
+ *
+ * Creates a sparse matrix by:
+ * 1. Filling with samples from a normal distribution
+ * 2. Randomly setting a fraction of elements in each row to zero
+ *
+ * Note: The Python documentation says "per column" but the actual implementation
+ * (both Python and this C++ version) applies sparsity per row: each row gets
+ * num_zeros elements zeroed, where num_zeros = ceil(sparsity * num_columns).
+ *
+ * Args:
+ *   - a: Input array (must be 2D)
+ *   - sparsity: Fraction of columns to zero out in each row (0.0-1.0)
+ *   - mean: Mean of normal distribution (default: 0.0)
+ *   - std: Standard deviation (default: 1.0)
+ *   - stream (optional)
+ *
+ * Returns: Array with same shape as input, sparsified normal distribution
+ */
+Napi::Value Sparse(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+
+  // Ensure Metal is initialized
+  try {
+    mlx::node::Runtime::Instance().EnsureMetalInit();
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  // Validate argument count (at least 2: array and sparsity)
+  if (info.Length() < 2) {
+    Napi::TypeError::New(env, "sparse requires at least 2 arguments: array and sparsity")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  // Parse input array
+  auto* wrapper = UnwrapArray(env, info[0]);
+  if (!wrapper) return env.Null();
+  const auto& a = wrapper->tensor();
+
+  // Validate 2D array
+  if (a.ndim() != 2) {
+    Napi::TypeError::New(env, "sparse: only tensors with 2 dimensions are supported")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  // Parse sparsity
+  if (!info[1].IsNumber()) {
+    Napi::TypeError::New(env, "sparsity must be a number")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  float sparsity = info[1].As<Napi::Number>().FloatValue();
+
+  // Validate sparsity range
+  if (sparsity < 0.0f || sparsity > 1.0f) {
+    Napi::TypeError::New(env, "sparsity must be between 0 and 1")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  // Parse optional parameters
+  float mean = 0.0f;
+  float std = 1.0f;
+
+  int next_arg = 2;
+
+  // Check for mean parameter
+  if (info.Length() > next_arg && info[next_arg].IsNumber()) {
+    mean = info[next_arg].As<Napi::Number>().FloatValue();
+    next_arg++;
+  }
+
+  // Check for std parameter
+  if (info.Length() > next_arg && info[next_arg].IsNumber()) {
+    std = info[next_arg].As<Napi::Number>().FloatValue();
+    next_arg++;
+  }
+
+  // Parse stream (last argument if present and not a number)
+  mlx::core::Stream stream;
+  bool has_stream = false;
+  if (info.Length() > next_arg) {
+    stream = mlx::node::ParseStreamOrDevice(env, info[next_arg], *addon);
+    if (env.IsExceptionPending()) return env.Null();
+    has_stream = true;
+  }
+  if (!has_stream) {
+    stream = mlx::core::default_stream(mlx::core::default_device());
+  }
+
+  try {
+    // Get array dimensions
+    int rows = a.shape(0);
+    int cols = a.shape(1);
+    
+    // Calculate number of zeros per row
+    // (Despite docs saying "per column", this is actually per row in the implementation)
+    int num_zeros = static_cast<int>(std::ceil(sparsity * static_cast<float>(cols)));
+
+    // Generate random order for each element (argsort of uniform random values)
+    // This determines which elements to zero out
+    auto order = mlx::core::argsort(
+        mlx::core::random::uniform(a.shape(), mlx::core::float32, std::nullopt, stream),
+        1,  // axis=1 (sort along columns for each row)
+        stream
+    );
+
+    // Generate normal distribution with specified mean and std
+    auto result = mlx::core::random::normal(
+        a.shape(),
+        a.dtype(),
+        mlx::core::array(mean),
+        mlx::core::array(std),
+        std::nullopt,
+        stream
+    );
+
+    // Evaluate both arrays to get actual data
+    order = mlx::core::eval(order);
+    result = mlx::core::eval(result);
+    
+    // Note: MLX doesn't have easy advanced indexing in C++ (like Python's a[indices] = 0)
+    // So we evaluate the arrays, modify the data in memory, and create a new array.
+    // This is less efficient than pure MLX operations but necessary without scatter operations.
+    
+    // Get raw data pointers
+    const int* order_ptr = order.data<int>();
+    
+    // Create a vector to hold the modified result
+    std::vector<float> result_vec;
+    result_vec.reserve(rows * cols);
+    
+    // Copy result data to vector based on dtype
+    // TODO: Support other dtypes (float16, bfloat16, int types, etc.)
+    // This requires template specialization or switch-case for each dtype's data<T>() call
+    // and appropriate handling of zero values for each type.
+    if (a.dtype() == mlx::core::float32) {
+      const float* result_ptr = result.data<float>();
+      result_vec.assign(result_ptr, result_ptr + rows * cols);
+      
+      // Zero out the selected elements based on argsort order
+      // For each row, zero out the first num_zeros elements according to random order
+      for (int row = 0; row < rows; row++) {
+        for (int j = 0; j < num_zeros; j++) {
+          int col = order_ptr[row * cols + j];
+          result_vec[row * cols + col] = 0.0f;
+        }
+      }
+      
+      // Create new array from modified data
+      auto final_result = mlx::core::array(
+          result_vec.data(),
+          {rows, cols},
+          a.dtype()
+      );
+      
+      return WrapArray(env, std::make_shared<mlx::core::array>(std::move(final_result)));
+    } else {
+      // For other dtypes, we need different handling
+      // For now, just support float32
+      Napi::TypeError::New(env, "sparse currently only supports float32 dtype")
+          .ThrowAsJavaScriptException();
+      return env.Null();
+    }
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, std::string("sparse failed: ") + e.what())
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+}
+
 } // namespace
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -2969,9 +3147,14 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   core.Set("maximum", Napi::Function::New(env, Maximum, "maximum", &data));
   core.Set("minimum", Napi::Function::New(env, Minimum, "minimum", &data));
 
+  // NN init functions
+  Napi::Object nn_init = Napi::Object::New(env);
+  nn_init.Set("sparse", Napi::Function::New(env, Sparse, "sparse", &data));
+  
   // (already initialized dtype/streams above)
 
   mlx.Set("core", core);
+  mlx.Set("nn_init", nn_init);
 
   // Return top-level mlx namespace (not nested under exports.mlx)
   return mlx;
