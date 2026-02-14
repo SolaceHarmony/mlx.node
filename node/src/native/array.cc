@@ -3280,7 +3280,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   core.Set("moveaxis", Napi::Function::New(env, MoveAxis, "moveaxis", &data));
   core.Set("swapaxes", Napi::Function::New(env, SwapAxes, "swapaxes", &data));
   core.Set("arange", Napi::Function::New(env, Arange, "arange", &data));
-  core.Set("normal", Napi::Function::New(env, Normal, "normal", &data));
+  // Note: normal is registered under core.random.normal (see below)
   core.Set("add", Napi::Function::New(env, Add, "add", &data));
   core.Set("multiply", Napi::Function::New(env, Multiply, "multiply", &data));
   core.Set("subtract", Napi::Function::New(env, Subtract, "subtract", &data));
@@ -3320,8 +3320,6 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   random.Set("uniform", Napi::Function::New(env, RandomUniform, "uniform", &data));
   random.Set("normal", Napi::Function::New(env, Normal, "normal", &data));
   core.Set("random", random);
-
-  // (already initialized dtype/streams above)
 
   mlx.Set("core", core);
   mlx.Set("nn_init", nn_init);
