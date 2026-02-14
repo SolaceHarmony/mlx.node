@@ -1,11 +1,11 @@
-import addon, { nn_init } from './internal/addon';
+import addon from './internal/addon';
 import * as utils from './utils';
 import * as core from './core';
 import * as streaming from './streaming';
 import * as react from './react';
 import * as optimizers from './optimizers';
-import * as random from './random';
 import * as nn_init from './nn_init';
+import * as nn from './nn';
 
 // Native addon utilities
 export const native = {
@@ -13,7 +13,7 @@ export const native = {
 };
 
 // Export namespaces for organized access
-export { core, utils, streaming, react, optimizers, random, nn_init };
+export { core, utils, streaming, react, optimizers, nn_init, nn };
 
 // Convenience re-exports from core (TypeScript idiomatic style)
 // Usage: import { array, zeros } from 'mlx';
@@ -54,7 +54,7 @@ export const {
   minimum,
   where,
   arange,
-  normal,
+  random,
   tan,
   sin,
   cos,
