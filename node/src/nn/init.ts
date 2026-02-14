@@ -1,31 +1,38 @@
 import MLXArray from '../core/array';
-import type { MLXDtype } from '../core/dtype';
 import { random } from '../core/ops';
 
 /**
- * Calculate fan_in and fan_out for an array.
- * 
- * Based on the Python implementation in mlx.nn.init._calculate_fan_in_fan_out
- * 
- * @param a - The array to calculate fan values for
- * @returns Tuple of [fan_in, fan_out]
+ * Type for initializer functions.
+ * These functions take a shape array and return initialized values.
  */
-function calculateFanInFanOut(a: MLXArray): [number, number] {
-  const shape = a.shape;
-  
-  if (shape.length < 1) {
-    throw new Error('Array must have at least 1 dimension');
+export type InitializerFunction = (
+  array: MLXArray,
+  ...args: any[]
+) => MLXArray;
+
+/**
+ * Calculate fan_in and fan_out for a given array shape.
+ *
+ * For weight initialization, fan_in is the number of input units
+ * and fan_out is the number of output units.
+ *
+ * @param x - The array whose shape to analyze
+ * @returns A tuple [fan_in, fan_out]
+ */
+function _calculateFanInFanOut(x: MLXArray): [number, number] {
+  const shape = x.shape;
+
+  if (shape.length < 2) {
+    throw new Error(
+      `Glorot / He initialization requires at least 2 dimensional input ` +
+      `but input with ${shape.length} dimensions.`
+    );
   }
-  
-  if (shape.length === 1) {
-    return [shape[0], shape[0]];
-  }
-  
+
   let fanIn = shape[shape.length - 1];
   let fanOut = shape[0];
-  
+
   if (shape.length > 2) {
-    // For conv layers, multiply by receptive field size
     let receptiveField = 1;
     for (let i = 1; i < shape.length - 1; i++) {
       receptiveField *= shape[i];
@@ -33,76 +40,173 @@ function calculateFanInFanOut(a: MLXArray): [number, number] {
     fanIn *= receptiveField;
     fanOut *= receptiveField;
   }
-  
+
   return [fanIn, fanOut];
 }
 
-export type FanMode = 'fan_in' | 'fan_out';
-
-export interface HeNormalInitializer {
-  /**
-   * Initialize an array with He normal distribution.
-   * 
-   * @param a - The array whose shape determines the output shape
-   * @param mode - Either 'fan_in' or 'fan_out'. Default: 'fan_in'
-   * @param gain - Scaling factor for the standard deviation. Default: 1.0
-   * @returns Array filled with samples from He normal distribution
-   */
-  (a: MLXArray, mode?: FanMode, gain?: number): MLXArray;
-}
-
 /**
- * Build a He normal initializer.
+ * A He uniform (Kaiming uniform) initializer.
  *
- * This initializer samples from a normal distribution with a standard
- * deviation computed from the number of input (`fan_in`) or output
- * (`fan_out`) units according to:
+ * This initializer samples from a uniform distribution with a range
+ * computed from the number of input (fan_in) or output (fan_out)
+ * units according to:
  *
- * ```
- * σ = gain / sqrt(fan)
- * ```
+ *     limit = gain * sqrt(3.0 / fan)
  *
  * where `fan` is either the number of input units when the
- * `mode` is `"fan_in"` or output units when the `mode` is
- * `"fan_out"`.
+ * mode is "fan_in" or output units when the mode is "fan_out".
  *
- * For more details see the original reference: [Delving Deep into Rectifiers:
- * Surpassing Human-Level Performance on ImageNet Classification](https://arxiv.org/abs/1502.01852)
+ * For more details see the original reference:
+ * "Delving Deep into Rectifiers: Surpassing Human-Level Performance on ImageNet Classification"
+ * https://arxiv.org/abs/1502.01852
  *
- * @param dtype - The data type of the array. Default: float32
- * @returns An initializer function that returns an array with the same shape as the input,
- *          filled with samples from the He normal distribution
+ * @param dtype - The data type of the array. Default: float32.
+ * @returns An initializer function that returns an array with the same shape
+ *          as the input, filled with samples from the He uniform distribution.
  *
  * @example
  * ```typescript
- * import * as mx from 'mlx';
+ * import { nn, zeros } from 'mlx';
  *
- * // Create a He normal initializer
- * const initFn = mx.nn.heNormal();
+ * // Create initializer
+ * const initFn = nn.init.he_uniform();
  *
- * // Initialize a weight matrix (fan_in mode by default)
- * const weights = mx.core.zeros([64, 128]); // 128 input features, 64 output features
- * const initializedWeights = initFn(weights);
+ * // Initialize a 2x2 weight matrix (uses fan_in by default)
+ * const weights = initFn(zeros([2, 2]));
  *
- * // Use fan_out mode with custom gain
- * const weights2 = mx.core.zeros([64, 128]);
- * const initializedWeights2 = initFn(weights2, 'fan_out', 2.0);
+ * // Initialize with fan_out mode and custom gain
+ * const weights2 = initFn(zeros([2, 2]), 'fan_out', 5);
  * ```
  */
-export function heNormal(dtype: MLXDtype = { key: 'float32' } as MLXDtype): HeNormalInitializer {
-  return (a: MLXArray, mode: FanMode = 'fan_in', gain: number = 1.0): MLXArray => {
-    const [fanIn, fanOut] = calculateFanInFanOut(a);
-    
+export function he_uniform(dtype?: any): InitializerFunction {
+  return (
+    a: MLXArray,
+    mode: 'fan_in' | 'fan_out' = 'fan_in',
+    gain: number = 1.0
+  ): MLXArray => {
+    const [fanIn, fanOut] = _calculateFanInFanOut(a);
+
     let fan: number;
     if (mode === 'fan_in') {
       fan = fanIn;
     } else if (mode === 'fan_out') {
       fan = fanOut;
     } else {
-      throw new Error(`Invalid mode: ${mode}. Valid modes are: fan_in, fan_out`);
+      throw new Error(
+        `Invalid mode: ${mode}. Valid modes are: fan_in, fan_out`
+      );
     }
-    
+
+    const limit = gain * Math.sqrt(3.0 / fan);
+    return random.uniform(-limit, limit, a.shape, { dtype });
+  };
+}
+
+/**
+ * A He normal initializer.
+ *
+ * This initializer samples from a normal distribution with a standard
+ * deviation computed from the number of input (fan_in) or output
+ * (fan_out) units according to:
+ *
+ *     std = gain / sqrt(fan)
+ *
+ * where `fan` is either the number of input units when the
+ * mode is "fan_in" or output units when the mode is "fan_out".
+ *
+ * @param dtype - The data type of the array. Default: float32.
+ * @returns An initializer function
+ *
+ * @example
+ * ```typescript
+ * import { nn, zeros } from 'mlx';
+ *
+ * const initFn = nn.init.he_normal();
+ * const weights = initFn(zeros([2, 2]));
+ * ```
+ */
+export function he_normal(dtype?: any): InitializerFunction {
+  return (
+    a: MLXArray,
+    mode: 'fan_in' | 'fan_out' = 'fan_in',
+    gain: number = 1.0
+  ): MLXArray => {
+    const [fanIn, fanOut] = _calculateFanInFanOut(a);
+
+    let fan: number;
+    if (mode === 'fan_in') {
+      fan = fanIn;
+    } else if (mode === 'fan_out') {
+      fan = fanOut;
+    } else {
+      throw new Error(
+        `Invalid mode: ${mode}. Valid modes are: fan_in, fan_out`
+      );
+    }
+
     const std = gain / Math.sqrt(fan);
+    return random.normal(a.shape, { scale: std, dtype });
+  };
+}
+
+/**
+ * A Glorot uniform initializer.
+ *
+ * This initializer samples from a uniform distribution with a range
+ * computed from the number of input (fan_in) and output (fan_out)
+ * units according to:
+ *
+ *     limit = gain * sqrt(6.0 / (fan_in + fan_out))
+ *
+ * @param dtype - The data type of the array. Default: float32.
+ * @returns An initializer function
+ *
+ * @example
+ * ```typescript
+ * import { nn, zeros } from 'mlx';
+ *
+ * const initFn = nn.init.glorot_uniform();
+ * const weights = initFn(zeros([2, 2]));
+ * ```
+ */
+export function glorot_uniform(dtype?: any): InitializerFunction {
+  return (
+    a: MLXArray,
+    gain: number = 1.0
+  ): MLXArray => {
+    const [fanIn, fanOut] = _calculateFanInFanOut(a);
+    const limit = gain * Math.sqrt(6.0 / (fanIn + fanOut));
+    return random.uniform(-limit, limit, a.shape, { dtype });
+  };
+}
+
+/**
+ * A Glorot normal initializer.
+ *
+ * This initializer samples from a normal distribution with a standard
+ * deviation computed from the number of input (fan_in) and output
+ * (fan_out) units according to:
+ *
+ *     std = gain * sqrt(2.0 / (fan_in + fan_out))
+ *
+ * @param dtype - The data type of the array. Default: float32.
+ * @returns An initializer function
+ *
+ * @example
+ * ```typescript
+ * import { nn, zeros } from 'mlx';
+ *
+ * const initFn = nn.init.glorot_normal();
+ * const weights = initFn(zeros([2, 2]));
+ * ```
+ */
+export function glorot_normal(dtype?: any): InitializerFunction {
+  return (
+    a: MLXArray,
+    gain: number = 1.0
+  ): MLXArray => {
+    const [fanIn, fanOut] = _calculateFanInFanOut(a);
+    const std = gain * Math.sqrt(2.0 / (fanIn + fanOut));
     return random.normal(a.shape, { scale: std, dtype });
   };
 }

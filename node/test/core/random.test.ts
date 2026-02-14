@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import {
-  normal,
+  random,
   zeros,
   float32,
 } from '../../src';
@@ -9,19 +9,19 @@ import { glorotNormal } from '../../src/utils';
 
 describe('random.normal', () => {
   it('generates arrays with correct shape', () => {
-    const result = normal([2, 3]);
+    const result = random.normal([2, 3]);
     assert.deepEqual(result.shape, [2, 3]);
     assert.equal(result.dtype.name, 'float32');
   });
 
   it('accepts dtype parameter', () => {
-    const result = normal([2, 3], { dtype: float32 });
+    const result = random.normal([2, 3], { dtype: float32 });
     assert.deepEqual(result.shape, [2, 3]);
     assert.equal(result.dtype.name, 'float32');
   });
 
   it('accepts loc and scale parameters', () => {
-    const result = normal([100], { loc: 5, scale: 2 });
+    const result = random.normal([100], { loc: 5, scale: 2 });
     assert.deepEqual(result.shape, [100]);
   });
 });

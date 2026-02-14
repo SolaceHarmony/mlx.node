@@ -504,24 +504,17 @@ export namespace random {
   /**
    * Generate normally distributed random numbers.
    *
-   * Generates samples from a normal (Gaussian) distribution with specified mean and standard deviation.
-   * If `loc` and `scale` are not provided, generates from the standard normal distribution (mean=0, std=1).
+   * Generates samples from a normal (Gaussian) distribution with specified
+   * mean and standard deviation. If `loc` and `scale` are not provided,
+   * generates from the standard normal distribution (mean=0, std=1).
    *
    * @param shape - Shape of the output array
-   * @param options - Optional configuration including:
-   *   - dtype: Data type of the output (default: float32)
-   *   - loc: Mean of the distribution (default: 0)
-   *   - scale: Standard deviation of the distribution (default: 1)
-   *   - key: PRNG key for reproducible random numbers
-   *   - stream: Stream or device for computation
+   * @param options - Optional configuration (dtype, loc, scale, key, stream)
    * @returns Array of normally distributed random numbers
    *
    * @example
    * ```typescript
-   * // Standard normal distribution (mean=0, std=1, dtype=float32)
    * const x = mx.random.normal([2, 3]);
-   *
-   * // Normal distribution with mean=5, std=2
    * const y = mx.random.normal([2, 3], { loc: 5, scale: 2 });
    * ```
    */
@@ -559,6 +552,65 @@ export namespace random {
     appendStreamArg(args, options?.stream);
 
     const handle = addon.random.normal(...args);
+    return MLXArray.fromHandle(handle);
+  }
+
+  export interface UniformOptions extends StreamOptions {
+    dtype?: any;
+  }
+
+  /**
+   * Generate uniform random numbers.
+   *
+   * Generates random numbers from a uniform distribution. Can be called in two ways:
+   * 1. uniform(shape, options?) - generates random numbers in [0, 1)
+   * 2. uniform(low, high, shape, options?) - generates random numbers in [low, high)
+   *
+   * @param lowOrShape - Either the lower bound (if high and shape provided) or the shape
+   * @param highOrOptions - Either the upper bound (if low and shape mode) or options
+   * @param shapeOrOptions - Either the shape (if low and high provided) or options
+   * @param maybeOptions - Options (if using low, high, shape signature)
+   * @returns An MLXArray of uniform random numbers
+   *
+   * @example
+   * ```typescript
+   * const a = mx.random.uniform([2, 3]);
+   * const b = mx.random.uniform(-1, 1, [2, 3]);
+   * ```
+   */
+  export function uniform(
+    lowOrShape: number | readonly number[],
+    highOrOptions?: number | UniformOptions,
+    shapeOrOptions?: readonly number[] | UniformOptions,
+    maybeOptions?: UniformOptions,
+  ): MLXArray {
+    let args: any[];
+    let options: UniformOptions | undefined;
+
+    if (typeof lowOrShape === 'number' && typeof highOrOptions === 'number') {
+      const low = lowOrShape;
+      const high = highOrOptions;
+      const shape = normalizeShapeInput(shapeOrOptions as readonly number[]);
+      options = maybeOptions;
+      args = [low, high, shape];
+    } else {
+      let shape: readonly number[];
+      if (typeof lowOrShape === 'number') {
+        shape = normalizeShapeInput([lowOrShape]);
+      } else {
+        shape = normalizeShapeInput(lowOrShape);
+      }
+      options = highOrOptions as UniformOptions | undefined;
+      args = [shape];
+    }
+
+    if (options?.dtype !== undefined) {
+      args.push(options.dtype);
+    }
+
+    appendStreamArg(args, options?.stream);
+
+    const handle = addon.random.uniform(...args);
     return MLXArray.fromHandle(handle);
   }
 }

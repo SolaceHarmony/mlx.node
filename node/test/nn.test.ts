@@ -1,122 +1,142 @@
-import { strict as assert } from 'assert';
-import * as mx from '../src';
+import { strict as assert } from 'node:assert';
+import { nn, zeros, array } from '../../src';
 
-describe('nn.heNormal', () => {
-  it('creates initializer function', () => {
-    const initFn = mx.nn.heNormal();
-    assert.equal(typeof initFn, 'function');
+const toArray = (tensor: ReturnType<typeof array>): number[] => tensor.toArray() as number[];
+
+describe('nn.init', () => {
+  describe('he_uniform', () => {
+    it('initializes weights with correct shape', () => {
+      const initFn = nn.init.he_uniform();
+      const weights = initFn(zeros([4, 3]));
+      assert.deepEqual(weights.shape, [4, 3]);
+    });
+
+    it('uses fan_in mode by default', () => {
+      const initFn = nn.init.he_uniform();
+      const weights = initFn(zeros([4, 3]));
+      const values = toArray(weights);
+
+      // For fan_in mode with shape [4, 3]: fan_in = 3
+      // limit = gain * sqrt(3.0 / fan) = 1.0 * sqrt(3.0 / 3) = 1.0
+      // So values should be in [-1, 1)
+      values.forEach(v => {
+        assert.ok(v >= -1.0 && v < 1.0, `Value ${v} should be in range [-1, 1)`);
+      });
+    });
+
+    it('respects fan_out mode', () => {
+      const initFn = nn.init.he_uniform();
+      const weights = initFn(zeros([4, 3]), 'fan_out');
+      const values = toArray(weights);
+
+      // For fan_out mode with shape [4, 3]: fan_out = 4
+      // limit = gain * sqrt(3.0 / fan) = 1.0 * sqrt(3.0 / 4) = sqrt(0.75) ≈ 0.866
+      // So values should be in [-0.866, 0.866)
+      const expectedLimit = Math.sqrt(3.0 / 4);
+      values.forEach(v => {
+        assert.ok(
+          v >= -expectedLimit && v < expectedLimit,
+          `Value ${v} should be in range [${-expectedLimit}, ${expectedLimit})`
+        );
+      });
+    });
+
+    it('respects custom gain parameter', () => {
+      const initFn = nn.init.he_uniform();
+      const gain = 2.0;
+      const weights = initFn(zeros([4, 3]), 'fan_in', gain);
+      const values = toArray(weights);
+
+      // For fan_in mode with shape [4, 3] and gain=2: fan_in = 3
+      // limit = gain * sqrt(3.0 / fan) = 2.0 * sqrt(3.0 / 3) = 2.0
+      // So values should be in [-2, 2)
+      values.forEach(v => {
+        assert.ok(v >= -2.0 && v < 2.0, `Value ${v} should be in range [-2, 2)`);
+      });
+    });
+
+    it('handles 3D tensors correctly', () => {
+      const initFn = nn.init.he_uniform();
+      const weights = initFn(zeros([4, 3, 2]));
+      const values = toArray(weights);
+
+      // For 3D tensor [4, 3, 2]: fan_in = 2 * 3 = 6, fan_out = 4 * 3 = 12
+      // Using fan_in mode: limit = sqrt(3.0 / 6) = sqrt(0.5) ≈ 0.707
+      const expectedLimit = Math.sqrt(3.0 / 6);
+      values.forEach(v => {
+        assert.ok(
+          v >= -expectedLimit && v < expectedLimit,
+          `Value ${v} should be in range [${-expectedLimit}, ${expectedLimit})`
+        );
+      });
+    });
+
+    it('throws error for 1D tensors', () => {
+      const initFn = nn.init.he_uniform();
+      assert.throws(
+        () => initFn(zeros([10])),
+        /requires at least 2 dimensional input/
+      );
+    });
+
+    it('throws error for invalid mode', () => {
+      const initFn = nn.init.he_uniform();
+      assert.throws(
+        () => initFn(zeros([4, 3]), 'invalid_mode' as any),
+        /Invalid mode/
+      );
+    });
+
+    it('generates different values for each call', () => {
+      const initFn = nn.init.he_uniform();
+      const weights1 = initFn(zeros([3, 3]));
+      const weights2 = initFn(zeros([3, 3]));
+      const values1 = toArray(weights1);
+      const values2 = toArray(weights2);
+
+      // With high probability, at least one value should differ
+      const allSame = values1.every((v, i) => v === values2[i]);
+      assert.ok(!allSame, 'Random initializations should differ between calls');
+    });
   });
 
-  it('initializes 2D array with correct shape', () => {
-    const initFn = mx.nn.heNormal();
-    const weights = mx.core.zeros([64, 128]);
-    const initialized = initFn(weights);
-    
-    assert.ok(initialized instanceof mx.core.Array);
-    assert.deepEqual(initialized.shape, [64, 128]);
-    assert.equal(initialized.dtype, 'float32');
-  });
+  describe('glorot_uniform', () => {
+    it('initializes weights with correct shape', () => {
+      const initFn = nn.init.glorot_uniform();
+      const weights = initFn(zeros([4, 3]));
+      assert.deepEqual(weights.shape, [4, 3]);
+    });
 
-  it('supports fan_in mode (default)', () => {
-    const initFn = mx.nn.heNormal();
-    const weights = mx.core.zeros([64, 128]);
-    
-    // fan_in = 128 (last dimension)
-    // With default gain = 1.0: std = 1.0 / sqrt(128) ≈ 0.0884
-    const initialized = initFn(weights, 'fan_in');
-    
-    initialized.eval();
-    const values = initialized.toFloat32Array();
-    
-    // Check that values are distributed with roughly correct std
-    const mean = Array.from(values).reduce((a, b) => a + b, 0) / values.length;
-    const variance = Array.from(values).reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length;
-    const std = Math.sqrt(variance);
-    
-    const expectedStd = 1.0 / Math.sqrt(128);
-    assert.ok(Math.abs(std - expectedStd) < 0.05, 
-      `Standard deviation ${std} should be close to ${expectedStd}`);
-  });
+    it('uses correct distribution', () => {
+      const initFn = nn.init.glorot_uniform();
+      const weights = initFn(zeros([4, 3]));
+      const values = toArray(weights);
 
-  it('supports fan_out mode', () => {
-    const initFn = mx.nn.heNormal();
-    const weights = mx.core.zeros([64, 128]);
-    
-    // fan_out = 64 (first dimension)
-    // std = 1.0 / sqrt(64) = 0.125
-    const initialized = initFn(weights, 'fan_out');
-    
-    initialized.eval();
-    const values = initialized.toFloat32Array();
-    
-    const mean = Array.from(values).reduce((a, b) => a + b, 0) / values.length;
-    const variance = Array.from(values).reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length;
-    const std = Math.sqrt(variance);
-    
-    const expectedStd = 1.0 / Math.sqrt(64);
-    assert.ok(Math.abs(std - expectedStd) < 0.05,
-      `Standard deviation ${std} should be close to ${expectedStd}`);
-  });
+      // For shape [4, 3]: fan_in = 3, fan_out = 4
+      // limit = gain * sqrt(6.0 / (fan_in + fan_out)) = 1.0 * sqrt(6.0 / 7) ≈ 0.926
+      const expectedLimit = Math.sqrt(6.0 / 7);
+      values.forEach(v => {
+        assert.ok(
+          v >= -expectedLimit && v < expectedLimit,
+          `Value ${v} should be in range [${-expectedLimit}, ${expectedLimit})`
+        );
+      });
+    });
 
-  it('supports custom gain', () => {
-    const initFn = mx.nn.heNormal();
-    const weights = mx.core.zeros([64, 128]);
-    
-    // With gain = 2.0, std = 2.0 / sqrt(128)
-    const initialized = initFn(weights, 'fan_in', 2.0);
-    
-    initialized.eval();
-    const values = initialized.toFloat32Array();
-    
-    const mean = Array.from(values).reduce((a, b) => a + b, 0) / values.length;
-    const variance = Array.from(values).reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length;
-    const std = Math.sqrt(variance);
-    
-    const expectedStd = 2.0 / Math.sqrt(128);
-    assert.ok(Math.abs(std - expectedStd) < 0.05,
-      `Standard deviation ${std} should be close to ${expectedStd}`);
-  });
+    it('respects custom gain parameter', () => {
+      const initFn = nn.init.glorot_uniform();
+      const gain = 3.0;
+      const weights = initFn(zeros([4, 3]), gain);
+      const values = toArray(weights);
 
-  it('throws on invalid mode', () => {
-    const initFn = mx.nn.heNormal();
-    const weights = mx.core.zeros([64, 128]);
-    
-    assert.throws(() => {
-      initFn(weights, 'invalid_mode' as any);
-    }, /Invalid mode/);
-  });
-
-  it('handles 1D arrays', () => {
-    const initFn = mx.nn.heNormal();
-    const bias = mx.core.zeros([64]);
-    
-    // For 1D: fan_in = fan_out = 64
-    const initialized = initFn(bias);
-    
-    assert.ok(initialized instanceof mx.core.Array);
-    assert.deepEqual(initialized.shape, [64]);
-  });
-
-  it('handles convolutional weight shapes (4D)', () => {
-    const initFn = mx.nn.heNormal();
-    
-    // Typical conv shape: [out_channels, kernel_h, kernel_w, in_channels]
-    // e.g., [32, 3, 3, 64]
-    const convWeights = mx.core.zeros([32, 3, 3, 64]);
-    
-    // fan_in = in_channels * kernel_h * kernel_w = 64 * 3 * 3 = 576
-    // fan_out = out_channels * kernel_h * kernel_w = 32 * 3 * 3 = 288
-    const initialized = initFn(convWeights, 'fan_in');
-    
-    assert.ok(initialized instanceof mx.core.Array);
-    assert.deepEqual(initialized.shape, [32, 3, 3, 64]);
-  });
-
-  it('supports custom dtype', () => {
-    const initFn = mx.nn.heNormal(mx.core.float16);
-    const weights = mx.core.zeros([64, 128]);
-    const initialized = initFn(weights);
-    
-    assert.equal(initialized.dtype, 'float16');
+      // limit = 3.0 * sqrt(6.0 / 7) ≈ 2.778
+      const expectedLimit = 3.0 * Math.sqrt(6.0 / 7);
+      values.forEach(v => {
+        assert.ok(
+          v >= -expectedLimit && v < expectedLimit,
+          `Value ${v} should be in range [${-expectedLimit}, ${expectedLimit})`
+        );
+      });
+    });
   });
 });

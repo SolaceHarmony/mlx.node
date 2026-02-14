@@ -6,7 +6,7 @@
  */
 
 import { type MLXArray } from '../core/array';
-import { normal, type NormalOptions } from '../core/ops';
+import { random, type NormalOptions } from '../core/ops';
 import { float32, type DTypeLike } from '../core/dtype';
 
 /**
@@ -102,6 +102,6 @@ export function glorotNormal(options?: GlorotNormalOptions): Initializer {
       scale: std,
     };
     
-    return normal(arr.shape, normalOpts);
+    return random.normal(arr.shape, normalOpts);
   };
 }
