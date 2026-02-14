@@ -1,5 +1,5 @@
 import MLXArray from '../core/array';
-import { stream_context as createStreamContext } from '../core/stream';
+import { stream_context } from '../core/stream';
 import { frameToMessage } from './encoding';
 import { tensorToFrames } from './tensors';
 import type {
@@ -226,7 +226,7 @@ export function createEventStream(
             push({ data: '', retry: retryDelayMs });
           }
           if (streamOption && !streamCtx) {
-            streamCtx = createStreamContext(streamOption);
+            streamCtx = stream_context(streamOption);
             streamCtx.enter();
           }
           for await (const value of iterable) {
