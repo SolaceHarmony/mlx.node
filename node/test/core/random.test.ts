@@ -5,7 +5,7 @@ import {
   zeros,
   float32,
 } from '../../src';
-import { glorotNormal } from '../../src/utils';
+import { glorot_normal } from '../../src/utils';
 
 describe('random.normal', () => {
   it('generates arrays with correct shape', () => {
@@ -26,9 +26,9 @@ describe('random.normal', () => {
   });
 });
 
-describe('glorotNormal', () => {
+describe('glorot_normal', () => {
   it('initializes 2D weight matrices', () => {
-    const initFn = glorotNormal();
+    const initFn = glorot_normal();
     const weights = zeros([10, 5]);
     const initialized = initFn(weights);
     
@@ -37,7 +37,7 @@ describe('glorotNormal', () => {
   });
 
   it('accepts gain parameter', () => {
-    const initFn = glorotNormal();
+    const initFn = glorot_normal();
     const weights = zeros([10, 5]);
     const initialized = initFn(weights, 2.0);
     
@@ -45,7 +45,7 @@ describe('glorotNormal', () => {
   });
 
   it('throws error for 1D arrays', () => {
-    const initFn = glorotNormal();
+    const initFn = glorot_normal();
     const weights = zeros([10]);
     
     assert.throws(() => {

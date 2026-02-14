@@ -1,5 +1,5 @@
 import MLXArray from '../core/array';
-import { streamContext as createStreamContext } from '../core/stream';
+import { stream_context as createStreamContext } from '../core/stream';
 import { frameToMessage } from './encoding';
 import { tensorToFrames } from './tensors';
 import type {

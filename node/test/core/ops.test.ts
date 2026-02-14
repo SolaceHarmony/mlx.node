@@ -12,17 +12,17 @@ import {
   divide,
   power,
   equal,
-  notEqual,
+  not_equal,
   less,
-  lessEqual,
+  less_equal,
   greater,
-  greaterEqual,
+  greater_equal,
   maximum,
   minimum,
   where,
   arange,
-  newStream,
-  withStream,
+  new_stream,
+  with_stream,
   float32,
   float16,
   int32,
@@ -296,17 +296,17 @@ describe('core ops', () => {
     assert.deepEqual(toArray(result), [0, 1, 0]);
   });
 
-  it('notEqual performs element-wise inequality comparison', () => {
+  it('not_equalperforms element-wise inequality comparison', () => {
     const a = array([1, 2, 3, 4], [4]);
     const b = array([1, 0, 3, 0], [4]);
-    const result = notEqual(a, b);
+    const result = not_equal(a, b);
     assert.deepEqual(result.shape, [4]);
     assert.deepEqual(toArray(result), [0, 1, 0, 1]); // true=1, false=0
   });
 
-  it('notEqual supports scalar operations', () => {
+  it('not_equalsupports scalar operations', () => {
     const a = array([1, 2, 3], [3]);
-    const result = notEqual(a, 2);
+    const result = not_equal(a, 2);
     assert.deepEqual(result.shape, [3]);
     assert.deepEqual(toArray(result), [1, 0, 1]);
   });
@@ -326,17 +326,17 @@ describe('core ops', () => {
     assert.deepEqual(toArray(result), [1, 0, 0]);
   });
 
-  it('lessEqual performs element-wise less-than-or-equal comparison', () => {
+  it('less_equalperforms element-wise less-than-or-equal comparison', () => {
     const a = array([1, 2, 3, 4], [4]);
     const b = array([2, 2, 2, 2], [4]);
-    const result = lessEqual(a, b);
+    const result = less_equal(a, b);
     assert.deepEqual(result.shape, [4]);
     assert.deepEqual(toArray(result), [1, 1, 0, 0]); // 1<=2, 2<=2, 3<=2, 4<=2
   });
 
-  it('lessEqual supports scalar operations', () => {
+  it('less_equalsupports scalar operations', () => {
     const a = array([1, 2, 3], [3]);
-    const result = lessEqual(a, 2);
+    const result = less_equal(a, 2);
     assert.deepEqual(result.shape, [3]);
     assert.deepEqual(toArray(result), [1, 1, 0]);
   });
@@ -356,17 +356,17 @@ describe('core ops', () => {
     assert.deepEqual(toArray(result), [0, 0, 1]);
   });
 
-  it('greaterEqual performs element-wise greater-than-or-equal comparison', () => {
+  it('greater_equalperforms element-wise greater-than-or-equal comparison', () => {
     const a = array([1, 2, 3, 4], [4]);
     const b = array([2, 2, 2, 2], [4]);
-    const result = greaterEqual(a, b);
+    const result = greater_equal(a, b);
     assert.deepEqual(result.shape, [4]);
     assert.deepEqual(toArray(result), [0, 1, 1, 1]); // 1>=2, 2>=2, 3>=2, 4>=2
   });
 
-  it('greaterEqual supports scalar operations', () => {
+  it('greater_equalsupports scalar operations', () => {
     const a = array([1, 2, 3], [3]);
-    const result = greaterEqual(a, 2);
+    const result = greater_equal(a, 2);
     assert.deepEqual(result.shape, [3]);
     assert.deepEqual(toArray(result), [0, 1, 1]);
   });
@@ -488,8 +488,8 @@ describe('core ops', () => {
   });
 
   it('operations respect explicit streams', async () => {
-    const stream = newStream();
-    await withStream(stream, () => {
+    const stream = new_stream();
+    await with_stream(stream, () => {
       const a = array([1, 2, 3, 4], [2, 2]);
       const reshaped = reshape(a, [4, 1]);
       assert.deepEqual(reshaped.shape, [4, 1]);
@@ -599,8 +599,8 @@ describe('arange', () => {
   });
 
   it('respects explicit streams', async () => {
-    const stream = newStream();
-    await withStream(stream, () => {
+    const stream = new_stream();
+    await with_stream(stream, () => {
       const result = arange(5, undefined, undefined, { stream });
       assert.deepEqual(result.shape, [5]);
       assert.deepEqual(toArray(result), [0, 1, 2, 3, 4]);

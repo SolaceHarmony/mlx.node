@@ -77,10 +77,10 @@ export type Initializer = (arr: MLXArray, gain?: number) => MLXArray;
  * @example
  * ```typescript
  * import * as mx from 'mlx';
- * import { glorotNormal } from 'mlx/utils';
+ * import { glorot_normal } from 'mlx/utils';
  * 
  * // Create initializer
- * const initFn = glorotNormal();
+ * const initFn = glorot_normal();
  * 
  * // Initialize a weight matrix
  * const weights = mx.zeros([100, 50]);
@@ -90,7 +90,7 @@ export type Initializer = (arr: MLXArray, gain?: number) => MLXArray;
  * const initializedWithGain = initFn(weights, 2.0);
  * ```
  */
-export function glorotNormal(options?: GlorotNormalOptions): Initializer {
+export function glorot_normal(options?: GlorotNormalOptions): Initializer {
   const dtype = options?.dtype ?? float32;
   
   return (arr: MLXArray, gain: number = 1.0): MLXArray => {
