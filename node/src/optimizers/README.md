@@ -266,7 +266,7 @@ Where:
 The optimizer implementation follows the Python MLX design:
 
 1. **Pure TypeScript/JavaScript layer**: Optimizers are not C++ primitives but use MLX array operations
-2. **Tree-based parameter handling**: Uses `treeMap` utilities to handle nested parameter structures
+2. **Tree-based parameter handling**: Uses `tree_map` utilities to handle nested parameter structures
 3. **Lazy initialization**: State is initialized on first use or explicit `init()` call
 4. **Scheduler support**: Learning rate and other parameters can be functions of step count
 5. **Stateful updates**: Maintains velocity/momentum in state dictionary

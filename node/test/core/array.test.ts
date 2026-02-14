@@ -78,14 +78,14 @@ describe('core.array', () => {
     assert.ok(full.toArray().every((value) => value === 7.5));
   });
 
-  it('supports *Like helpers', () => {
+  it('supports *_like helpers', () => {
     const base = core.zeros([4], 'float32');
-    const zerosLikeResult = core.zerosLike(base);
+    const zerosLikeResult = core.zeros_like(base);
     assert.deepEqual(zerosLikeResult.shape, [4]);
     assert.equal(zerosLikeResult.dtype, 'float32');
     assert.ok(zerosLikeResult.toArray().every((value) => value === 0));
 
-    const onesLikeResult = core.onesLike(base);
+    const onesLikeResult = core.ones_like(base);
     assert.equal(onesLikeResult.dtype, 'float32');
     assert.ok(onesLikeResult.toArray().every((value) => value === 1));
   });

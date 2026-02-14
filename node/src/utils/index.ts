@@ -1,16 +1,16 @@
 export {
-  treeMap,
-  treeMapWithPath,
-  treeFlatten,
-  treeUnflatten,
-  treeReduce,
-  treeMerge,
+  tree_map,
+  tree_map_with_path,
+  tree_flatten,
+  tree_unflatten,
+  tree_reduce,
+  tree_merge,
 } from './tree';
 
 export type { TreeVisitOptions, TreeFlattenOptions } from './tree';
 
 export {
-  glorotNormal,
+  glorot_normal,
   type Initializer,
   type GlorotNormalOptions,
 } from './nn_init';

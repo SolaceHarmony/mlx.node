@@ -5,9 +5,9 @@
  * Based on mlx.optimizers from the Python MLX library.
  */
 
-import MLXArray, { zeros, zerosLike } from '../core/array';
+import MLXArray, { zeros, zeros_like } from '../core/array';
 import { add, multiply, subtract, sign, square, sqrt, divide, abs, maximum, minimum, matmul, reshape, transpose, rsqrt, power } from '../core/ops';
-import { treeMap, treeFlatten, treeUnflatten, treeMerge } from '../utils';
+import { tree_map, tree_flatten, tree_unflatten, tree_merge } from '../utils';
 
 /**
  * Scheduler function type - maps step number to a parameter value
@@ -49,7 +49,7 @@ export abstract class Optimizer {
           if (i < stateArray.length) {
             stateArray[i] = updateState(params[i], stateArray[i]);
           } else {
-            stateArray.push(treeMap(() => ({}), params[i]));
+            stateArray.push(tree_map(() => ({}), params[i]));
           }
         }
         return stateArray;
@@ -57,7 +57,7 @@ export abstract class Optimizer {
         const stateObj = state || {};
         for (const [k, v] of Object.entries(params)) {
           if (!(k in stateObj)) {
-            stateObj[k] = treeMap(() => ({}), v);
+            stateObj[k] = tree_map(() => ({}), v);
           } else {
             stateObj[k] = updateState(v, stateObj[k]);
           }
@@ -69,7 +69,7 @@ export abstract class Optimizer {
     };
 
     updateState(parameters, this._state);
-    treeMap(
+    tree_map(
       (p: any, s: any) => {
         if (p instanceof MLXArray && (!s || Object.keys(s).length === 0)) {
           return this.initSingle(p, s || {});
@@ -115,7 +115,7 @@ export abstract class Optimizer {
     // For now, this is a placeholder that needs proper implementation
 
     // Apply the update
-    return treeMap(
+    return tree_map(
       (gradient: any, parameter: any, state: any) => {
         if (gradient instanceof MLXArray && parameter instanceof MLXArray) {
           return this.applySingle(gradient, parameter, state);
@@ -255,8 +255,8 @@ export class SGD extends Optimizer {
   }
 
   protected initSingle(parameter: MLXArray, state: Record<string, any>): void {
-    // Initialize velocity with zerosLike
-    state.v = zerosLike(parameter);
+    // Initialize velocity with zeros_like
+    state.v = zeros_like(parameter);
   }
 
   protected applySingle(
@@ -295,7 +295,7 @@ export class SGD extends Optimizer {
     }
 
     // Get velocity from state
-    let v = state.v || zerosLike(parameter);
+    let v = state.v || zeros_like(parameter);
     
     // Update velocity
     v = multiply(array(this.momentum), v);
@@ -380,9 +380,9 @@ export class Adam extends Optimizer {
   }
 
   protected initSingle(parameter: MLXArray, state: Record<string, any>): void {
-    // Initialize first moment (m) and second moment (v) with zerosLike
-    state.m = zerosLike(parameter);
-    state.v = zerosLike(parameter);
+    // Initialize first moment (m) and second moment (v) with zeros_like
+    state.m = zeros_like(parameter);
+    state.v = zeros_like(parameter);
   }
 
   protected applySingle(
@@ -579,9 +579,9 @@ export class Adamax extends Adam {
   }
 
   protected initSingle(parameter: MLXArray, state: Record<string, any>): void {
-    // Initialize first moment (m) and exponentially weighted infinity norm (v) with zerosLike
-    state.m = zerosLike(parameter);
-    state.v = zerosLike(parameter);
+    // Initialize first moment (m) and exponentially weighted infinity norm (v) with zeros_like
+    state.m = zeros_like(parameter);
+    state.v = zeros_like(parameter);
   }
 
   protected applySingle(
@@ -632,7 +632,7 @@ export class Lion extends Optimizer {
   }
 
   protected initSingle(parameter: MLXArray, state: Record<string, any>): void {
-    state.m = zerosLike(parameter);
+    state.m = zeros_like(parameter);
   }
 
   protected applySingle(
@@ -735,8 +735,8 @@ export class Adagrad extends Optimizer {
   }
 
   protected initSingle(parameter: MLXArray, state: Record<string, any>): void {
-    // Initialize accumulated squared gradients with zerosLike
-    state.v = zerosLike(parameter);
+    // Initialize accumulated squared gradients with zeros_like
+    state.v = zeros_like(parameter);
   }
 
   protected applySingle(
@@ -817,10 +817,10 @@ export class AdaDelta extends Optimizer {
   }
 
   protected initSingle(parameter: MLXArray, state: Record<string, any>): void {
-    // Initialize moving average of squared gradients with zerosLike
-    state.v = zerosLike(parameter);
-    // Initialize moving average of squared updates with zerosLike
-    state.u = zerosLike(parameter);
+    // Initialize moving average of squared gradients with zeros_like
+    state.v = zeros_like(parameter);
+    // Initialize moving average of squared updates with zeros_like
+    state.u = zeros_like(parameter);
   }
 
   protected applySingle(
@@ -905,8 +905,8 @@ export class RMSprop extends Optimizer {
   }
 
   protected initSingle(parameter: MLXArray, state: Record<string, any>): void {
-    // Initialize moving average of squared gradients with zerosLike
-    state.v = zerosLike(parameter);
+    // Initialize moving average of squared gradients with zeros_like
+    state.v = zeros_like(parameter);
   }
 
   protected applySingle(
@@ -1047,12 +1047,12 @@ export class Adafactor extends Optimizer {
       state.exp_avg_sq_row = zeros(rowShape, dtype);
       state.exp_avg_sq_col = zeros(colShape, dtype);
     } else {
-      state.exp_avg_sq = zerosLike(parameter);
+      state.exp_avg_sq = zeros_like(parameter);
     }
 
     // If beta1 is set, initialize first moment (momentum)
     if (this.beta1 !== undefined) {
-      state.exp_avg = zerosLike(parameter);
+      state.exp_avg = zeros_like(parameter);
     }
   }
 
@@ -1301,7 +1301,7 @@ export class MultiOptimizer extends Optimizer {
     const parts: Array<[string, any]>[] = this.optimizers.map(() => []);
 
     // Flatten the tree to get (path, value) pairs
-    const flatTree = treeFlatten(tree) as Array<[string, any]>;
+    const flatTree = tree_flatten(tree) as Array<[string, any]>;
 
     // Assign each (path, value) pair to the first matching filter
     for (const [key, value] of flatTree) {
@@ -1314,7 +1314,7 @@ export class MultiOptimizer extends Optimizer {
     }
 
     // Unflatten each part back into a tree
-    return parts.map((part) => treeUnflatten(part) as Record<string, any>);
+    return parts.map((part) => tree_unflatten(part) as Record<string, any>);
   }
 
   /**
@@ -1345,7 +1345,7 @@ export class MultiOptimizer extends Optimizer {
         gradientSplits[i],
         parameterSplits[i]
       );
-      result = treeMerge(result, updated) as Record<string, any>;
+      result = tree_merge(result, updated) as Record<string, any>;
     }
 
     return result;
@@ -1472,8 +1472,8 @@ export class Muon extends Optimizer {
   }
 
   protected initSingle(parameter: MLXArray, state: Record<string, any>): void {
-    // Initialize velocity with zerosLike
-    state.v = zerosLike(parameter);
+    // Initialize velocity with zeros_like
+    state.v = zeros_like(parameter);
   }
 
   /**

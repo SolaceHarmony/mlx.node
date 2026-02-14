@@ -353,11 +353,11 @@ export function full(
   return MLXArray.fromHandle(addon.full(...args));
 }
 
-export function zerosLike(base: MLXArray): MLXArray {
+export function zeros_like(base: MLXArray): MLXArray {
   return MLXArray.fromHandle(addon.zeros_like(base.toNative()));
 }
 
-export function onesLike(base: MLXArray): MLXArray {
+export function ones_like(base: MLXArray): MLXArray {
   return MLXArray.fromHandle(addon.ones_like(base.toNative()));
 }
 

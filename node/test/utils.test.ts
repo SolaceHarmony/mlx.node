@@ -2,25 +2,25 @@ import { strict as assert } from 'assert';
 import { utils } from '../src';
 
 const {
-  treeMap,
-  treeMapWithPath,
-  treeFlatten,
-  treeUnflatten,
-  treeReduce,
-  treeMerge,
+  tree_map,
+  tree_map_with_path,
+  tree_flatten,
+  tree_unflatten,
+  tree_reduce,
+  tree_merge,
 } = utils;
 
 describe('mlx.utils tree helpers', () => {
-  it('treeMap applies function to leaves', () => {
+  it('tree_map applies function to leaves', () => {
     const input = { a: 0, b: 1, c: 2 };
-    const result = treeMap((x: number) => x + 1, input) as Record<string, number>;
+    const result = tree_map((x: number) => x + 1, input) as Record<string, number>;
     assert.deepStrictEqual(result, { a: 1, b: 2, c: 3 });
   });
 
-  it('treeMapWithPath tracks traversal paths', () => {
+  it('tree_map_with_path tracks traversal paths', () => {
     const structure = { model: [{ w: 0, b: 1 }, { w: 2, b: 3 }] };
     const seen: string[] = [];
-    const output = treeMapWithPath((path: string, value: number) => {
+    const output = tree_map_with_path((path: string, value: number) => {
       seen.push(path);
       return value;
     }, structure) as typeof structure;
@@ -29,39 +29,39 @@ describe('mlx.utils tree helpers', () => {
     assert.deepStrictEqual(seen, ['model.0.w', 'model.0.b', 'model.1.w', 'model.1.b']);
   });
 
-  it('treeMap validates tree prefixes', () => {
+  it('tree_map validates tree prefixes', () => {
     const base = { a: 1 };
     const mismatched = {};
     assert.throws(() => {
-      treeMap((a: number, b: number) => a + b, base, mismatched);
+      tree_map((a: number, b: number) => a + b, base, mismatched);
     }, /Tree is not a valid prefix tree/);
   });
 
-  it('treeFlatten and treeUnflatten round-trip', () => {
+  it('tree_flatten and tree_unflatten round-trip', () => {
     const tree = [{ a: 1, b: 2 }, 'c'];
-    const flattened = treeFlatten(tree) as Array<[string, unknown]>;
+    const flattened = tree_flatten(tree) as Array<[string, unknown]>;
     assert.deepStrictEqual(flattened.map(([, value]) => value), [1, 2, 'c']);
-    const restored = treeUnflatten(flattened);
+    const restored = tree_unflatten(flattened);
     assert.deepStrictEqual(restored, tree);
   });
 
-  it('treeReduce aggregates leaves', () => {
+  it('tree_reduce aggregates leaves', () => {
     const tree = { a: [1, 2, 3], b: [4, 5] };
-    const sum = treeReduce((acc: number, value: number) => acc + value, tree, 0) as number;
+    const sum = tree_reduce((acc: number, value: number) => acc + value, tree, 0) as number;
     assert.equal(sum, 15);
   });
 
-  it('treeMerge combines complementary trees', () => {
+  it('tree_merge combines complementary trees', () => {
     const left = { a: 0 };
     const right = { b: 1 };
-    const merged = treeMerge(left, right) as Record<string, number>;
+    const merged = tree_merge(left, right) as Record<string, number>;
     assert.deepStrictEqual(merged, { a: 0, b: 1 });
 
     assert.throws(() => {
-      treeMerge(left, left);
+      tree_merge(left, left);
     }, /no merge function was provided/);
 
-    const stacked = treeMerge(
+    const stacked = tree_merge(
       { layers: [{ w: 1, b: 2 }] },
       { layers: [undefined, { w: 3, b: 4 }] },
     ) as { layers: Array<Record<string, number> | undefined> };

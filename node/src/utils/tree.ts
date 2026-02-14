@@ -138,12 +138,12 @@ function treeMapImpl(
   return transform(current, ...rest);
 }
 
-export function treeMap(fn: TreeMapTransform, tree: unknown, ...rest: unknown[]): unknown {
+export function tree_map(fn: TreeMapTransform, tree: unknown, ...rest: unknown[]): unknown {
   const { restTrees, options } = extractOptions(rest);
   return treeMapImpl(fn, [tree, ...restTrees], options, undefined, false);
 }
 
-export function treeMapWithPath(
+export function tree_map_with_path(
   fn: TreeMapTransform,
   tree: unknown,
   ...rest: unknown[]
@@ -152,7 +152,7 @@ export function treeMapWithPath(
   return treeMapImpl(fn, [tree, ...restTrees], options, undefined, true);
 }
 
-export function treeFlatten(
+export function tree_flatten(
   tree: unknown,
   options: TreeFlattenOptions = {},
 ): Array<[string, unknown]> | Record<string, unknown> {
@@ -197,7 +197,7 @@ export function treeFlatten(
   return dest;
 }
 
-export function treeUnflatten(
+export function tree_unflatten(
   tree: Array<[string, unknown]> | Record<string, unknown>,
 ): unknown {
   const items = Array.isArray(tree) ? tree : Object.entries(tree);
@@ -241,7 +241,7 @@ export function treeUnflatten(
       while (result.length < index) {
         result.push({});
       }
-      const subtree = treeUnflatten(children.get(originalKey) ?? []);
+      const subtree = tree_unflatten(children.get(originalKey) ?? []);
       if (result.length === index) {
         result.push(subtree);
       } else {
@@ -253,12 +253,12 @@ export function treeUnflatten(
 
   const result: Record<string, unknown> = {};
   for (const [key, bucket] of children.entries()) {
-    result[key] = treeUnflatten(bucket);
+    result[key] = tree_unflatten(bucket);
   }
   return result;
 }
 
-export function treeReduce(
+export function tree_reduce(
   fn: (accumulator: any, value: any) => any,
   tree: unknown,
   initializer?: unknown,
@@ -308,7 +308,7 @@ export function treeReduce(
   return accumulator;
 }
 
-export function treeMerge(
+export function tree_merge(
   treeA: unknown,
   treeB: unknown,
   mergeFn?: (a: unknown, b: unknown) => unknown,
@@ -350,7 +350,7 @@ export function treeMerge(
     for (let i = 0; i < maxLength; i += 1) {
       const left = i < a.length ? a[i] : null;
       const right = i < b.length ? b[i] : null;
-      result[i] = treeMerge(left, right, mergeFn);
+      result[i] = tree_merge(left, right, mergeFn);
     }
     return result;
   }
@@ -359,7 +359,7 @@ export function treeMerge(
     const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
     const result: Record<string, unknown> = {};
     keys.forEach((key) => {
-      result[key] = treeMerge((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key], mergeFn);
+      result[key] = tree_merge((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key], mergeFn);
     });
     return result;
   }

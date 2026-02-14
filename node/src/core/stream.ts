@@ -60,19 +60,19 @@ function createContext(stream: StreamLike): NativeStreamContext {
   return addon.stream(toNativeStreamOrDevice(stream)) as NativeStreamContext;
 }
 
-export function defaultStream(device?: DeviceLike | null): MLXStream {
+export function default_stream(device?: DeviceLike | null): MLXStream {
   const arg = device == null ? undefined : normalizeDevice(device);
   const handle = arg ? addon.default_stream(arg) : addon.default_stream();
   return MLXStream.fromHandle(handle);
 }
 
-export function newStream(device?: DeviceLike | null): MLXStream {
+export function new_stream(device?: DeviceLike | null): MLXStream {
   const arg = device == null ? undefined : normalizeDevice(device);
   const handle = arg ? addon.new_stream(arg) : addon.new_stream();
   return MLXStream.fromHandle(handle);
 }
 
-export function setDefaultStream(stream: MLXStream): void {
+export function set_default_stream(stream: MLXStream): void {
   addon.set_default_stream(stream.toNative());
 }
 
@@ -82,18 +82,18 @@ export function synchronize(stream?: StreamLike | null): void {
     return;
   }
   if (!isStream(stream)) {
-    const native = defaultStream(stream);
+    const native = default_stream(stream);
     addon.synchronize(native.toNative());
     return;
   }
   addon.synchronize(stream.toNative());
 }
 
-export function streamContext(stream: StreamLike): NativeStreamContext {
+export function stream_context(stream: StreamLike): NativeStreamContext {
   return createContext(stream);
 }
 
-export async function withStream<T>(
+export async function with_stream<T>(
   stream: StreamLike,
   fn: () => Promise<T> | T,
 ): Promise<T> {
