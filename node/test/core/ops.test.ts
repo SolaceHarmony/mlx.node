@@ -607,3 +607,35 @@ describe('arange', () => {
     });
   });
 });
+
+describe('random ops', () => {
+  it('random.uniform generates values with correct shape', () => {
+    const result = core.random.uniform([2, 3]);
+    assert.deepEqual(result.shape, [2, 3]);
+    const values = toArray(result);
+    // All values should be in [0, 1)
+    values.forEach(v => {
+      assert.ok(v >= 0 && v < 1, `Value ${v} should be in [0, 1)`);
+    });
+  });
+
+  it('random.uniform with low and high bounds', () => {
+    const result = core.random.uniform(-5, 5, [10]);
+    assert.deepEqual(result.shape, [10]);
+    const values = toArray(result);
+    // All values should be in [-5, 5)
+    values.forEach(v => {
+      assert.ok(v >= -5 && v < 5, `Value ${v} should be in [-5, 5)`);
+    });
+  });
+
+  it('random.uniform generates different values', () => {
+    const result1 = core.random.uniform([5]);
+    const result2 = core.random.uniform([5]);
+    const values1 = toArray(result1);
+    const values2 = toArray(result2);
+    // With high probability, at least one value should differ
+    const allSame = values1.every((v, i) => v === values2[i]);
+    assert.ok(!allSame, 'Random values should differ between calls');
+  });
+});

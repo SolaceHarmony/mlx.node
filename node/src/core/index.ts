@@ -266,6 +266,7 @@ const core = {
   sqrt,
   exp,
   log,
+  random,
   device: deviceModule,
   Dtype,
   dtype: dtypeModule,

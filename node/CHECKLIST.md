@@ -56,13 +56,17 @@ Reference source map: see `PORTING_PLAN.md` for the list of upstream C++ and Pyt
 - [ ] Complete `Adafactor.applySingle()` implementation (requires mean with axis parameter, expandDims).
 - [ ] Add scheduler support (`mlx.optimizers.schedulers`).
 
-## Neural Network Initialization (`mlx.utils`)
+## Neural Network (`mlx.nn`)
 - [x] `random.normal()` C++ binding for generating normal distributions.
-- [x] `glorotNormal()` initializer (Xavier normal) in TypeScript.
-- [ ] Add `glorotUniform()` initializer (Xavier uniform).
-- [ ] Add `heNormal()` and `heUniform()` initializers (Kaiming initialization).
-- [ ] Add `constant()`, `uniform()`, `identity()` initializers.
-- [ ] Add `orthogonal()` and `sparse()` initializers.
+- [x] `random.uniform()` C++ binding and TypeScript wrapper.
+- [x] `nn.init.constant()` initializer.
+- [x] `nn.init.glorotNormal()` initializer (Xavier normal).
+- [x] `nn.init.heUniform()` initializer (Kaiming uniform).
+- [ ] Add `nn.init.glorotUniform()` initializer (Xavier uniform).
+- [ ] Add `nn.init.heNormal()` initializer (Kaiming normal).
+- [ ] Add `nn.init.orthogonal()` and `nn.init.sparse()` initializers.
+- [ ] Layer implementations (Linear, Conv, etc.).
+- [ ] Activation functions.
 
 ## Tooling & Tests
 - [x] Mocha + TypeScript test harness covering core entry points.
