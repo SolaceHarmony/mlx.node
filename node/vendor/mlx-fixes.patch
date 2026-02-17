@@ -1,0 +1,12 @@
+--- a/vendor/mlx/types/bf16.h
++++ b/vendor/mlx/types/bf16.h
+@@ -25,6 +25,9 @@ struct _MLX_BFloat16 {
+   _MLX_BFloat16() = default;
+
+   // Default copy constructor
+   _MLX_BFloat16(_MLX_BFloat16 const&) = default;
++
++  // Default copy assignment operator (fixes -Wdeprecated-copy)
++  _MLX_BFloat16& operator=(_MLX_BFloat16 const&) = default;
+
+   // Appease std::vector<bool> for being special
