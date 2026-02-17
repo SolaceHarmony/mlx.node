@@ -4,6 +4,14 @@
   "description": "MLX for Node 22 with Metal GPU (experimental)",
   "main": "index.js",
   "license": "MIT",
+  "scripts": {
+    "build": "npm run build:native",
+    "build:native": "npx node-gyp configure build",
+    "test": "npx mocha --require ts-node/register --extension ts \"test/**/*.test.ts\"",
+    "ci": "npm run build:native && npm test",
+    "prepack": "npm run build:native",
+    "pack:dry-run": "npm pack --dry-run"
+  },
   "engines": {
     "node": ">=22"
   },
@@ -19,6 +27,15 @@
   "files": [
     "index.js",
     "build/Release/mlx.node"
-  ]
+  ],
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "mocha": "^11.7.5",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0"
+  },
+  "dependencies": {
+    "nan": "^2.25.0",
+    "node-addon-api": "^8.5.0"
+  }
 }
-
