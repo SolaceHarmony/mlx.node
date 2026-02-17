@@ -1,8 +1,120 @@
 /**
- * Neural network initialization functions.
+ * Neural network module.
  *
- * This module provides weight initialization strategies commonly used
- * in neural networks, following the Python MLX API.
+ * This module provides weight initialization strategies, loss functions,
+ * and activation functions commonly used in neural networks,
+ * following the Python MLX API.
  */
 export * as init from './init';
 export type { InitializerFunction } from './init';
+
+export * as losses from './losses';
+export {
+  cross_entropy,
+  binary_cross_entropy,
+  l1_loss,
+  mse_loss,
+  nll_loss,
+  gaussian_nll_loss,
+  kl_div_loss,
+  smooth_l1_loss,
+  triplet_loss,
+  hinge_loss,
+  huber_loss,
+  log_cosh_loss,
+  margin_ranking_loss,
+  cosine_similarity_loss,
+} from './losses';
+export type { Reduction } from './losses';
+
+// Functional activations
+export {
+  sigmoid,
+  relu,
+  leaky_relu,
+  log_softmax,
+  elu,
+  relu6,
+  softmax,
+  softplus,
+  softsign,
+  softshrink,
+  celu,
+  silu,
+  log_sigmoid,
+  gelu,
+  gelu_approx,
+  gelu_fast_approx,
+  glu,
+  step,
+  selu,
+  prelu,
+  mish,
+  hardswish,
+  hard_tanh,
+  hard_shrink,
+  softmin,
+  tanh,
+} from './layers';
+
+// Module classes
+export {
+  Sigmoid,
+  Mish,
+  ReLU,
+  LeakyReLU,
+  ELU,
+  ReLU6,
+  Softmax,
+  Softplus,
+  Softsign,
+  Softshrink,
+  CELU,
+  SiLU,
+  LogSoftmax,
+  LogSigmoid,
+  PReLU,
+  GELU,
+  Tanh,
+  Hardswish,
+  Step,
+  SELU,
+  HardTanh,
+  HardShrink,
+  Softmin,
+  GLU,
+} from './layers';
+
+// Layer modules
+export {
+  Identity,
+  Linear,
+  Bilinear,
+  Dropout,
+  Dropout2d,
+  Dropout3d,
+  Embedding,
+  LayerNorm,
+  RMSNorm,
+  GroupNorm,
+  BatchNorm,
+  InstanceNorm,
+  Conv1d,
+  Conv2d,
+  Conv3d,
+  RNN,
+  GRU,
+  LSTM,
+  MultiHeadAttention,
+  TransformerEncoderLayer,
+  TransformerEncoder,
+  TransformerDecoderLayer,
+  TransformerDecoder,
+  Transformer,
+  MaxPool1d,
+  AvgPool1d,
+  MaxPool2d,
+  AvgPool2d,
+  MaxPool3d,
+  AvgPool3d,
+} from './layers';
