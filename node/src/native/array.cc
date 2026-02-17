@@ -18,7 +18,9 @@
 #include "mlx/export.h"
 #include "mlx/mlx.h"
 #include "mlx/ops.h"
+#include "mlx/linalg.h"
 #include "mlx/random.h"
+#include "mlx/fast.h"
 #include "mlx_bridge.h"
 
 #include "dtype.h"
@@ -365,8 +367,15 @@ class ArrayWrapper : public Napi::ObjectWrap<ArrayWrapper> {
         return mlx::core::array(host.begin(), shape, dtype);
       }
       case mlx::core::float64: {
-        auto host = CopyTypedArray<double>(typed);
-        return mlx::core::array(host.begin(), shape, dtype);
+        // float64 uses double-double (Dekker split): convert double → float64_t
+        auto doubles = CopyTypedArray<double>(typed);
+        size_t nbytes = doubles.size() * sizeof(mlx::core::float64_t);
+        auto buf = mlx::core::allocator::malloc(nbytes);
+        auto* ptr = static_cast<mlx::core::float64_t*>(buf.raw_ptr());
+        for (size_t i = 0; i < doubles.size(); i++) {
+          ptr[i] = mlx::core::float64_t(doubles[i]);
+        }
+        return mlx::core::array(buf, shape, dtype);
       }
       case mlx::core::int8: {
         auto host = CopyTypedArray<int8_t>(typed);
@@ -543,9 +552,14 @@ class ArrayWrapper : public Napi::ObjectWrap<ArrayWrapper> {
       case mlx::core::float32:
         return ToFloat32Array(info);
       case mlx::core::float64: {
+        // Convert float64_t (double-double) back to native doubles for JS
         auto buffer = Napi::ArrayBuffer::New(env, length * sizeof(double));
         auto jsArray = Napi::Float64Array::New(env, length, buffer, 0);
-        std::memcpy(buffer.Data(), arr.data<double>(), length * sizeof(double));
+        auto* dst = static_cast<double*>(buffer.Data());
+        auto* src = arr.data<mlx::core::float64_t>();
+        for (size_t i = 0; i < length; i++) {
+          dst[i] = static_cast<double>(src[i]);
+        }
         return jsArray;
       }
       case mlx::core::int8: {
@@ -1093,8 +1107,20 @@ Napi::Value ArrayFactory(const Napi::CallbackInfo& info) {
     // Build array from flattened doubles; use float32 default unless dtype
     // provided
     auto dtype = maybeDtype.value_or(mlx::core::float32);
-    auto tensor =
-        std::make_shared<mlx::core::array>(flat.begin(), shape, dtype);
+    std::shared_ptr<mlx::core::array> tensor;
+    if (dtype == mlx::core::float64) {
+      // float64 needs Dekker split: convert double → float64_t in buffer
+      size_t nbytes = flat.size() * sizeof(mlx::core::float64_t);
+      auto buf = mlx::core::allocator::malloc(nbytes);
+      auto* ptr = static_cast<mlx::core::float64_t*>(buf.raw_ptr());
+      for (size_t i = 0; i < flat.size(); i++) {
+        ptr[i] = mlx::core::float64_t(flat[i]);
+      }
+      tensor = std::make_shared<mlx::core::array>(buf, shape, dtype);
+    } else {
+      tensor =
+          std::make_shared<mlx::core::array>(flat.begin(), shape, dtype);
+    }
     if (!std::holds_alternative<std::monostate>(streamArg)) {
       *tensor = mlx::core::copy(*tensor, streamArg);
     }
@@ -1137,7 +1163,17 @@ Napi::Value ArrayFactory(const Napi::CallbackInfo& info) {
         : info[0].IsBigInt()
         ? info[0].As<Napi::BigInt>().ToNumber().DoubleValue()
         : info[0].As<Napi::Number>().DoubleValue();
-    auto tensor = std::make_shared<mlx::core::array>(scalar, dtype);
+    std::shared_ptr<mlx::core::array> tensor;
+    if (dtype == mlx::core::float64) {
+      // float64 scalar needs Dekker split
+      auto buf = mlx::core::allocator::malloc(sizeof(mlx::core::float64_t));
+      auto* ptr = static_cast<mlx::core::float64_t*>(buf.raw_ptr());
+      *ptr = mlx::core::float64_t(scalar);
+      tensor = std::make_shared<mlx::core::array>(
+          buf, mlx::core::Shape{}, dtype);
+    } else {
+      tensor = std::make_shared<mlx::core::array>(scalar, dtype);
+    }
     if (!std::holds_alternative<std::monostate>(streamArg)) {
       *tensor = mlx::core::copy(*tensor, streamArg);
     }
@@ -1383,10 +1419,16 @@ static std::optional<mlx::core::array> ToArrayValue(
         break;
       }
       case mlx::core::float64: {
-        out = mlx::core::array(
-            flat.begin(),
-            shape.empty() ? mlx::core::Shape{(int)flat.size()} : shape,
-            dtype);
+        // Allocate buffer and write float64_t (double-double) values directly
+        auto out_shape =
+            shape.empty() ? mlx::core::Shape{(int)flat.size()} : shape;
+        size_t nbytes = flat.size() * sizeof(mlx::core::float64_t);
+        auto buf = mlx::core::allocator::malloc(nbytes);
+        auto* ptr = static_cast<mlx::core::float64_t*>(buf.raw_ptr());
+        for (size_t i = 0; i < flat.size(); i++) {
+          ptr[i] = mlx::core::float64_t(flat[i]);
+        }
+        out = mlx::core::array(buf, out_shape, dtype);
         break;
       }
       default: { // float32 and others default to float32 path
@@ -1798,10 +1840,27 @@ Napi::Value Reshape(const Napi::CallbackInfo& info) {
   if (env.IsExceptionPending() || wrapper == nullptr) {
     return env.Null();
   }
-  auto shape = ParseShapeArgument(env, info[1]);
-  if (env.IsExceptionPending()) {
+
+  // Parse shape allowing -1 as wildcard (unlike ParseShapeArgument)
+  if (!info[1].IsArray()) {
+    Napi::TypeError::New(env, "reshape: shape must be an array")
+        .ThrowAsJavaScriptException();
     return env.Null();
   }
+  auto shapeArr = info[1].As<Napi::Array>();
+  mlx::core::Shape shape;
+  shape.reserve(shapeArr.Length());
+  for (uint32_t i = 0; i < shapeArr.Length(); ++i) {
+    auto dimVal = shapeArr.Get(i);
+    if (!dimVal.IsNumber()) {
+      Napi::TypeError::New(env, "reshape: shape entries must be numbers")
+          .ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    shape.push_back(
+        static_cast<mlx::core::ShapeElem>(dimVal.As<Napi::Number>().Int64Value()));
+  }
+
   auto streamArg = GetStreamArgument(info, 2);
   if (env.IsExceptionPending()) {
     return env.Null();
@@ -2087,19 +2146,18 @@ Napi::Value Where(const Napi::CallbackInfo& info) {
         .ThrowAsJavaScriptException();
     return env.Null();
   }
-  auto* condition = UnwrapArray(env, info[0]);
-  auto* x = UnwrapArray(env, info[1]);
-  auto* y = UnwrapArray(env, info[2]);
-  if (env.IsExceptionPending() || condition == nullptr || x == nullptr ||
-      y == nullptr) {
-    return env.Null();
-  }
+  auto condition = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto x = ToArray(env, info[1]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto y = ToArray(env, info[2]);
+  if (env.IsExceptionPending()) return env.Null();
   auto streamArg = GetStreamArgument(info, 3);
   if (env.IsExceptionPending()) {
     return env.Null();
   }
   auto tensor = std::make_shared<mlx::core::array>(mlx::core::where(
-      condition->tensor(), x->tensor(), y->tensor(), streamArg));
+      condition, x, y, streamArg));
   return WrapArray(env, tensor);
 }
 
@@ -2791,35 +2849,28 @@ Napi::Value RandomUniform(const Napi::CallbackInfo& info) {
   }
   
   try {
-    mlx::core::array low;
-    mlx::core::array high;
-    std::vector<int> shape;
+    mlx::core::Shape shape;
     mlx::core::Dtype dtype = mlx::core::float32;
     int shapeArgIdx = 0;
-    
+    bool hasLowHigh = false;
+
     // Check if first two arguments are numbers/arrays (low, high variant)
-    if (info.Length() >= 2 && (info[0].IsNumber() || info[0].IsObject()) &&
+    // Note: first arg being an Array (JS array) means it's a shape, not a
+    // scalar
+    if (info.Length() >= 2 && info[0].IsNumber() &&
         (info[1].IsNumber() || info[1].IsObject())) {
-      // uniform(low, high, shape, ...)
-      low = ToArray(env, info[0]);
-      if (env.IsExceptionPending()) return env.Null();
-      high = ToArray(env, info[1]);
-      if (env.IsExceptionPending()) return env.Null();
+      hasLowHigh = true;
       shapeArgIdx = 2;
-    } else {
-      // uniform(shape, ...) - defaults to [0, 1)
-      low = mlx::core::array(0.0f);
-      high = mlx::core::array(1.0f);
-      shapeArgIdx = 0;
     }
-    
+
     // Parse shape
-    if (info.Length() <= shapeArgIdx || !info[shapeArgIdx].IsArray()) {
+    if (static_cast<size_t>(info.Length()) <= static_cast<size_t>(shapeArgIdx) ||
+        !info[shapeArgIdx].IsArray()) {
       Napi::TypeError::New(env, "shape must be an array")
           .ThrowAsJavaScriptException();
       return env.Null();
     }
-    
+
     auto shapeArray = info[shapeArgIdx].As<Napi::Array>();
     for (uint32_t i = 0; i < shapeArray.Length(); i++) {
       Napi::Value val = shapeArray[i];
@@ -2830,22 +2881,31 @@ Napi::Value RandomUniform(const Napi::CallbackInfo& info) {
       }
       shape.push_back(val.As<Napi::Number>().Int32Value());
     }
-    
+
     // Parse optional dtype
-    int dtypeArgIdx = shapeArgIdx + 1;
+    size_t dtypeArgIdx = shapeArgIdx + 1;
     if (info.Length() > dtypeArgIdx && IsDtypeArg(env, info[dtypeArgIdx], *addon)) {
       dtype = MaybeParseDtype(env, info[dtypeArgIdx], mlx::core::float32, *addon);
       if (env.IsExceptionPending()) return env.Null();
     }
-    
+
     // Parse stream
-    auto stream = mlx::core::default_stream(mlx::core::default_device());
-    if (info.Length() > dtypeArgIdx + 1) {
-      stream = mlx::node::ParseStreamOrDevice(env, info[info.Length() - 1], *addon);
-      if (env.IsExceptionPending()) return env.Null();
-    }
-    
-    auto result = mlx::core::random::uniform(low, high, shape, dtype, std::nullopt, stream);
+    auto streamArg = GetStreamArgument(info, dtypeArgIdx + 1);
+    if (env.IsExceptionPending()) return env.Null();
+
+    mlx::core::array result = [&]() -> mlx::core::array {
+      if (hasLowHigh) {
+        auto low = ToArray(env, info[0]);
+        auto high = ToArray(env, info[1]);
+        return mlx::core::random::uniform(
+            low, high, shape, dtype, std::nullopt, streamArg);
+      } else {
+        return mlx::core::random::uniform(
+            shape, dtype, std::nullopt, streamArg);
+      }
+    }();
+    if (env.IsExceptionPending()) return env.Null();
+
     return WrapArray(env, std::make_shared<mlx::core::array>(std::move(result)));
   } catch (const std::exception& e) {
     Napi::Error::New(env, std::string("random.uniform failed: ") + e.what())
@@ -3074,16 +3134,8 @@ Napi::Value Sparse(const Napi::CallbackInfo& info) {
   }
 
   // Parse stream (last argument if present and not a number)
-  mlx::core::Stream stream;
-  bool has_stream = false;
-  if (info.Length() > next_arg) {
-    stream = mlx::node::ParseStreamOrDevice(env, info[next_arg], *addon);
-    if (env.IsExceptionPending()) return env.Null();
-    has_stream = true;
-  }
-  if (!has_stream) {
-    stream = mlx::core::default_stream(mlx::core::default_device());
-  }
+  auto stream = GetStreamArgument(info, next_arg);
+  if (env.IsExceptionPending()) return env.Null();
 
   try {
     // Get array dimensions
@@ -3113,8 +3165,7 @@ Napi::Value Sparse(const Napi::CallbackInfo& info) {
     );
 
     // Evaluate both arrays to get actual data
-    order = mlx::core::eval(order);
-    result = mlx::core::eval(result);
+    mlx::core::eval({order, result});
     
     // Note: MLX doesn't have easy advanced indexing in C++ (like Python's a[indices] = 0)
     // So we evaluate the arrays, modify the data in memory, and create a new array.
@@ -3166,59 +3217,1632 @@ Napi::Value Sparse(const Napi::CallbackInfo& info) {
   }
 }
 
-/**
- * Import a function from a .mlxfn file.
- * 
- * Returns a callable JavaScript function that can be invoked with:
- * - Positional array arguments: fn(a, b, c)
- * - A single array/list of arrays: fn([a, b, c])
- * - A single object/dict of arrays: fn({x: a, y: b})
- * - Combined: fn([a, b], {x: c, y: d})
- * 
- * The returned function always returns a tuple (array) of output arrays.
- * 
- * Args:
- *   - file (string): Path to the .mlxfn file
- * 
- * Returns: A JavaScript function wrapping the imported MLX function
- */
-Napi::Value ImportFunction(const Napi::CallbackInfo& info) {
+// ---------------------------------------------------------------------------
+// Reduction helper: parse optional axis argument into a vector of ints.
+// When no axis is provided (or it's null/undefined), returns all axes [0..ndim).
+// ---------------------------------------------------------------------------
+std::vector<int> GetReduceAxes(
+    Napi::Env env,
+    const Napi::CallbackInfo& info,
+    size_t axisIndex,
+    const mlx::core::array& a) {
+  if (info.Length() <= axisIndex || info[axisIndex].IsNull() ||
+      info[axisIndex].IsUndefined()) {
+    // No axis => reduce over all dims
+    int ndim = a.ndim();
+    std::vector<int> axes(ndim);
+    std::iota(axes.begin(), axes.end(), 0);
+    return axes;
+  }
+  return ParseAxisVector(env, info[axisIndex], "axis");
+}
+
+// ---------------------------------------------------------------------------
+// Reduction ops: sum, mean, logsumexp
+// Signature: (array, axis?, keepdims?, stream?) where axis is int|int[]|null
+// ---------------------------------------------------------------------------
+Napi::Value Sum(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "sum expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto axes = GetReduceAxes(env, info, 1, a);
+  if (env.IsExceptionPending()) return env.Null();
+
+  bool keepdims = false;
+  size_t nextIdx = 2;
+  if (info.Length() > nextIdx && info[nextIdx].IsBoolean()) {
+    keepdims = info[nextIdx].As<Napi::Boolean>().Value();
+    nextIdx++;
+  }
+
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::sum(a, axes, keepdims, streamArg));
+  return WrapArray(env, tensor);
+}
+
+Napi::Value Mean(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "mean expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto axes = GetReduceAxes(env, info, 1, a);
+  if (env.IsExceptionPending()) return env.Null();
+
+  bool keepdims = false;
+  size_t nextIdx = 2;
+  if (info.Length() > nextIdx && info[nextIdx].IsBoolean()) {
+    keepdims = info[nextIdx].As<Napi::Boolean>().Value();
+    nextIdx++;
+  }
+
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::mean(a, axes, keepdims, streamArg));
+  return WrapArray(env, tensor);
+}
+
+Napi::Value LogSumExp(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "logsumexp expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto axes = GetReduceAxes(env, info, 1, a);
+  if (env.IsExceptionPending()) return env.Null();
+
+  bool keepdims = false;
+  size_t nextIdx = 2;
+  if (info.Length() > nextIdx && info[nextIdx].IsBoolean()) {
+    keepdims = info[nextIdx].As<Napi::Boolean>().Value();
+    nextIdx++;
+  }
+
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::logsumexp(a, axes, keepdims, streamArg));
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// Min: (array, axis?, keepdims?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value Min(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "min expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto axes = GetReduceAxes(env, info, 1, a);
+  if (env.IsExceptionPending()) return env.Null();
+  bool keepdims = false;
+  size_t nextIdx = 2;
+  if (info.Length() > nextIdx && info[nextIdx].IsBoolean()) {
+    keepdims = info[nextIdx].As<Napi::Boolean>().Value();
+    nextIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::min(a, axes, keepdims, streamArg));
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// Max: (array, axis?, keepdims?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value Max(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "max expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto axes = GetReduceAxes(env, info, 1, a);
+  if (env.IsExceptionPending()) return env.Null();
+  bool keepdims = false;
+  size_t nextIdx = 2;
+  if (info.Length() > nextIdx && info[nextIdx].IsBoolean()) {
+    keepdims = info[nextIdx].As<Napi::Boolean>().Value();
+    nextIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::max(a, axes, keepdims, streamArg));
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// Prod: (array, axis?, keepdims?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value Prod(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "prod expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto axes = GetReduceAxes(env, info, 1, a);
+  if (env.IsExceptionPending()) return env.Null();
+  bool keepdims = false;
+  size_t nextIdx = 2;
+  if (info.Length() > nextIdx && info[nextIdx].IsBoolean()) {
+    keepdims = info[nextIdx].As<Napi::Boolean>().Value();
+    nextIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::prod(a, axes, keepdims, streamArg));
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// Argmin: (array, axis?, keepdims?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value Argmin(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "argmin expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  int argIdx = 1;
+  int axis = 0;
+  bool hasAxis = false;
+  if (static_cast<size_t>(argIdx) < info.Length() && info[argIdx].IsNumber()) {
+    axis = info[argIdx].As<Napi::Number>().Int32Value();
+    hasAxis = true;
+    argIdx++;
+  }
+  bool keepdims = false;
+  if (static_cast<size_t>(argIdx) < info.Length() && info[argIdx].IsBoolean()) {
+    keepdims = info[argIdx].As<Napi::Boolean>().Value();
+    argIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, argIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  std::shared_ptr<mlx::core::array> tensor;
+  if (hasAxis) {
+    tensor = std::make_shared<mlx::core::array>(
+        mlx::core::argmin(a, axis, keepdims, streamArg));
+  } else {
+    tensor = std::make_shared<mlx::core::array>(
+        mlx::core::argmin(a, keepdims, streamArg));
+  }
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// Argmax: (array, axis?, keepdims?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value Argmax(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "argmax expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  int argIdx = 1;
+  int axis = 0;
+  bool hasAxis = false;
+  if (static_cast<size_t>(argIdx) < info.Length() && info[argIdx].IsNumber()) {
+    axis = info[argIdx].As<Napi::Number>().Int32Value();
+    hasAxis = true;
+    argIdx++;
+  }
+  bool keepdims = false;
+  if (static_cast<size_t>(argIdx) < info.Length() && info[argIdx].IsBoolean()) {
+    keepdims = info[argIdx].As<Napi::Boolean>().Value();
+    argIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, argIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  std::shared_ptr<mlx::core::array> tensor;
+  if (hasAxis) {
+    tensor = std::make_shared<mlx::core::array>(
+        mlx::core::argmax(a, axis, keepdims, streamArg));
+  } else {
+    tensor = std::make_shared<mlx::core::array>(
+        mlx::core::argmax(a, keepdims, streamArg));
+  }
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// Std: (array, axis?, keepdims?, ddof?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value Std(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "std expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  // Parse optional axes
+  std::optional<std::vector<int>> axes = std::nullopt;
+  int argIdx = 1;
+  if (info.Length() > argIdx && !info[argIdx].IsUndefined() &&
+      !info[argIdx].IsNull()) {
+    if (info[argIdx].IsNumber()) {
+      axes = std::vector<int>{info[argIdx].As<Napi::Number>().Int32Value()};
+      argIdx++;
+    } else if (info[argIdx].IsArray()) {
+      auto arr = info[argIdx].As<Napi::Array>();
+      std::vector<int> axesVec;
+      axesVec.reserve(arr.Length());
+      for (uint32_t i = 0; i < arr.Length(); ++i) {
+        axesVec.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+      }
+      axes = std::move(axesVec);
+      argIdx++;
+    } else if (info[argIdx].IsBoolean()) {
+      // No axes, this is keepdims — leave axes as nullopt
+    } else {
+      argIdx++;
+    }
+  }
+
+  // Parse optional keepdims
+  bool keepdims = false;
+  if (info.Length() > static_cast<size_t>(argIdx) &&
+      info[argIdx].IsBoolean()) {
+    keepdims = info[argIdx].As<Napi::Boolean>().Value();
+    argIdx++;
+  }
+
+  // Parse optional ddof
+  int ddof = 0;
+  if (info.Length() > static_cast<size_t>(argIdx) &&
+      info[argIdx].IsNumber()) {
+    ddof = info[argIdx].As<Napi::Number>().Int32Value();
+    argIdx++;
+  }
+
+  auto streamArg = GetStreamArgument(info, argIdx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  mlx::core::array result = [&]() {
+    if (axes.has_value()) {
+      return mlx::core::std(a, axes.value(), keepdims, ddof, streamArg);
+    } else {
+      return mlx::core::std(a, keepdims, ddof, streamArg);
+    }
+  }();
+
+  return WrapArray(env,
+                   std::make_shared<mlx::core::array>(std::move(result)));
+}
+
+// ---------------------------------------------------------------------------
+// LogCumSumExp: (array, axis, reverse?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value LogCumSumExp(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 2) {
+    Napi::TypeError::New(env, "logcumsumexp expects at least 2 arguments (array, axis)")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  int axis = info[1].As<Napi::Number>().Int32Value();
+  int argIdx = 2;
+  bool reverse = false;
+  if (static_cast<size_t>(argIdx) < info.Length() && info[argIdx].IsBoolean()) {
+    reverse = info[argIdx].As<Napi::Boolean>().Value();
+    argIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, argIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::logcumsumexp(a, axis, reverse, /*inclusive=*/true, streamArg));
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// Trace: (array, offset?, axis1?, axis2?, dtype?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value Trace(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "trace expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto& data = *static_cast<mlx::node::AddonData*>(info.Data());
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  int argIdx = 1;
+  int offset = 0;
+  int axis1 = 0;
+  int axis2 = 1;
+  bool hasDtype = false;
+  mlx::core::Dtype dtype = mlx::core::float32;
+
+  // Parse offset
+  if (static_cast<size_t>(argIdx) < info.Length() && info[argIdx].IsNumber()) {
+    offset = info[argIdx].As<Napi::Number>().Int32Value();
+    argIdx++;
+  }
+  // Parse axis1
+  if (static_cast<size_t>(argIdx) < info.Length() && info[argIdx].IsNumber()) {
+    axis1 = info[argIdx].As<Napi::Number>().Int32Value();
+    argIdx++;
+  }
+  // Parse axis2
+  if (static_cast<size_t>(argIdx) < info.Length() && info[argIdx].IsNumber()) {
+    axis2 = info[argIdx].As<Napi::Number>().Int32Value();
+    argIdx++;
+  }
+  // Parse optional dtype
+  if (static_cast<size_t>(argIdx) < info.Length() &&
+      IsDtypeArg(env, info[argIdx], data)) {
+    dtype = MaybeParseDtype(env, info[argIdx], mlx::core::float32, data);
+    hasDtype = true;
+    argIdx++;
+  }
+
+  auto streamArg = GetStreamArgument(info, argIdx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  mlx::core::array result = [&]() {
+    if (hasDtype) {
+      return mlx::core::trace(a, offset, axis1, axis2, dtype, streamArg);
+    } else {
+      return mlx::core::trace(a, offset, axis1, axis2, streamArg);
+    }
+  }();
+
+  return WrapArray(env,
+                   std::make_shared<mlx::core::array>(std::move(result)));
+}
+
+// ---------------------------------------------------------------------------
+// Softmax: (array, axis?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value Softmax(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "softmax expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto axes = GetReduceAxes(env, info, 1, a);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto streamArg = GetStreamArgument(info, 2);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::softmax(a, axes, false, streamArg));
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// Binary op: logaddexp(a, b, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value LogAddExp(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 2) {
+    Napi::TypeError::New(env, "logaddexp expects two arguments")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto b = ToArray(env, info[1]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto streamArg = GetStreamArgument(info, 2);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::logaddexp(a, b, streamArg));
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// clip(a, a_min?, a_max?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value Clip(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "clip expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  std::optional<mlx::core::array> min_val = std::nullopt;
+  std::optional<mlx::core::array> max_val = std::nullopt;
+
+  if (info.Length() > 1 && !info[1].IsNull() && !info[1].IsUndefined()) {
+    min_val = ToArray(env, info[1]);
+    if (env.IsExceptionPending()) return env.Null();
+  }
+  if (info.Length() > 2 && !info[2].IsNull() && !info[2].IsUndefined()) {
+    max_val = ToArray(env, info[2]);
+    if (env.IsExceptionPending()) return env.Null();
+  }
+
+  auto streamArg = GetStreamArgument(info, 3);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::clip(a, min_val, max_val, streamArg));
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// take_along_axis(a, indices, axis, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value TakeAlongAxis(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 3) {
+    Napi::TypeError::New(env, "take_along_axis expects (array, indices, axis)")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto* a = UnwrapArray(env, info[0]);
+  auto* indices = UnwrapArray(env, info[1]);
+  if (env.IsExceptionPending() || a == nullptr || indices == nullptr) {
+    return env.Null();
+  }
+
+  int axis = 0;
+  if (info[2].IsNull() || info[2].IsUndefined()) {
+    // None axis → flatten to 1D first
+    auto flat = mlx::core::reshape(a->tensor(), {-1});
+    auto streamArg = GetStreamArgument(info, 3);
+    if (env.IsExceptionPending()) return env.Null();
+    auto tensor = std::make_shared<mlx::core::array>(
+        mlx::core::take_along_axis(flat, indices->tensor(), 0, streamArg));
+    return WrapArray(env, tensor);
+  }
+
+  if (!info[2].IsNumber()) {
+    Napi::TypeError::New(env, "take_along_axis axis must be an integer")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  axis = info[2].As<Napi::Number>().Int32Value();
+
+  auto streamArg = GetStreamArgument(info, 3);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::take_along_axis(a->tensor(), indices->tensor(), axis, streamArg));
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// Unary ops: log1p, negative, reciprocal
+// ---------------------------------------------------------------------------
+Napi::Value Log1p(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "log1p expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto streamArg = GetStreamArgument(info, 1);
+  if (env.IsExceptionPending()) return env.Null();
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::log1p(a, streamArg));
+  return WrapArray(env, tensor);
+}
+
+Napi::Value Negative(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "negative expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto streamArg = GetStreamArgument(info, 1);
+  if (env.IsExceptionPending()) return env.Null();
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::negative(a, streamArg));
+  return WrapArray(env, tensor);
+}
+
+Napi::Value Reciprocal(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "reciprocal expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto streamArg = GetStreamArgument(info, 1);
+  if (env.IsExceptionPending()) return env.Null();
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::reciprocal(a, streamArg));
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// expand_dims(a, axis, stream?) — axis is int or int[]
+// ---------------------------------------------------------------------------
+Napi::Value ExpandDims(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 2) {
+    Napi::TypeError::New(env, "expand_dims expects (array, axis)")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto* a = UnwrapArray(env, info[0]);
+  if (env.IsExceptionPending() || a == nullptr) return env.Null();
+
+  if (info[1].IsNumber()) {
+    int axis = info[1].As<Napi::Number>().Int32Value();
+    auto streamArg = GetStreamArgument(info, 2);
+    if (env.IsExceptionPending()) return env.Null();
+    auto tensor = std::make_shared<mlx::core::array>(
+        mlx::core::expand_dims(a->tensor(), axis, streamArg));
+    return WrapArray(env, tensor);
+  }
+
+  auto axes = ParseAxisVector(env, info[1], "axis");
+  if (env.IsExceptionPending()) return env.Null();
+  auto streamArg = GetStreamArgument(info, 2);
+  if (env.IsExceptionPending()) return env.Null();
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::expand_dims(a->tensor(), axes, streamArg));
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// squeeze(a, axis?, stream?) — axis is int|int[]|null
+// ---------------------------------------------------------------------------
+Napi::Value Squeeze(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "squeeze expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto* a = UnwrapArray(env, info[0]);
+  if (env.IsExceptionPending() || a == nullptr) return env.Null();
+
+  // No axis or null/undefined → squeeze all size-1 dims
+  if (info.Length() < 2 || info[1].IsNull() || info[1].IsUndefined()) {
+    auto streamArg = GetStreamArgument(info, 2);
+    if (env.IsExceptionPending()) return env.Null();
+    auto tensor = std::make_shared<mlx::core::array>(
+        mlx::core::squeeze(a->tensor(), streamArg));
+    return WrapArray(env, tensor);
+  }
+
+  if (info[1].IsNumber()) {
+    int axis = info[1].As<Napi::Number>().Int32Value();
+    auto streamArg = GetStreamArgument(info, 2);
+    if (env.IsExceptionPending()) return env.Null();
+    auto tensor = std::make_shared<mlx::core::array>(
+        mlx::core::squeeze(a->tensor(), axis, streamArg));
+    return WrapArray(env, tensor);
+  }
+
+  auto axes = ParseAxisVector(env, info[1], "axis");
+  if (env.IsExceptionPending()) return env.Null();
+  auto streamArg = GetStreamArgument(info, 2);
+  if (env.IsExceptionPending()) return env.Null();
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::squeeze(a->tensor(), axes, streamArg));
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// concatenate(arrays, axis?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value Concatenate(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1 || !info[0].IsArray()) {
+    Napi::TypeError::New(env, "concatenate expects an array of arrays")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto jsArr = info[0].As<Napi::Array>();
+  std::vector<mlx::core::array> arrays;
+  arrays.reserve(jsArr.Length());
+  for (uint32_t i = 0; i < jsArr.Length(); ++i) {
+    auto* w = UnwrapArray(env, jsArr.Get(i));
+    if (env.IsExceptionPending() || w == nullptr) return env.Null();
+    arrays.push_back(w->tensor());
+  }
+
+  // Default axis = 0
+  int axis = 0;
+  size_t streamIdx = 1;
+  if (info.Length() > 1 && info[1].IsNumber()) {
+    axis = info[1].As<Napi::Number>().Int32Value();
+    streamIdx = 2;
+  } else if (info.Length() > 1 && (info[1].IsNull() || info[1].IsUndefined())) {
+    // null axis → concatenate flattened
+    streamIdx = 2;
+    auto streamArg = GetStreamArgument(info, streamIdx);
+    if (env.IsExceptionPending()) return env.Null();
+    auto tensor = std::make_shared<mlx::core::array>(
+        mlx::core::concatenate(arrays, streamArg));
+    return WrapArray(env, tensor);
+  }
+
+  auto streamArg = GetStreamArgument(info, streamIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::concatenate(arrays, axis, streamArg));
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// linalg.norm(a, ord?, axis?, keepdims?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value Norm(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "norm requires at least 1 argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  // Parse optional ord (index 1): null/undefined → no ord, number → double,
+  // string → string ord
+  bool hasOrd = info.Length() > 1 && !info[1].IsNull() && !info[1].IsUndefined();
+  bool ordIsString = hasOrd && info[1].IsString();
+  double ordNum = 0;
+  std::string ordStr;
+  if (hasOrd) {
+    if (ordIsString) {
+      ordStr = info[1].As<Napi::String>().Utf8Value();
+    } else {
+      ordNum = info[1].As<Napi::Number>().DoubleValue();
+    }
+  }
+
+  // Parse optional axis (index 2): null/undefined → nullopt, number → single
+  // axis, array → vector of axes
+  std::optional<std::vector<int>> axis = std::nullopt;
+  if (info.Length() > 2 && !info[2].IsNull() && !info[2].IsUndefined()) {
+    if (info[2].IsArray()) {
+      auto arr = info[2].As<Napi::Array>();
+      std::vector<int> axes;
+      axes.reserve(arr.Length());
+      for (uint32_t i = 0; i < arr.Length(); ++i) {
+        axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+      }
+      axis = axes;
+    } else {
+      axis = std::vector<int>{info[2].As<Napi::Number>().Int32Value()};
+    }
+  }
+
+  // Parse optional keepdims (index 3)
+  bool keepdims = false;
+  if (info.Length() > 3 && !info[3].IsNull() && !info[3].IsUndefined()) {
+    keepdims = info[3].As<Napi::Boolean>().Value();
+  }
+
+  // Parse optional stream (index 4)
+  auto streamArg = GetStreamArgument(info, 4);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto compute = [&]() -> mlx::core::array {
+    if (hasOrd) {
+      if (ordIsString) {
+        return mlx::core::linalg::norm(a, ordStr, axis, keepdims, streamArg);
+      } else {
+        return mlx::core::linalg::norm(a, ordNum, axis, keepdims, streamArg);
+      }
+    } else {
+      return mlx::core::linalg::norm(a, axis, keepdims, streamArg);
+    }
+  };
+
+  auto tensor = std::make_shared<mlx::core::array>(compute());
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// sigmoid(a, stream?) — element-wise logistic sigmoid
+// ---------------------------------------------------------------------------
+Napi::Value Sigmoid(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "sigmoid expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto streamArg = GetStreamArgument(info, 1);
+  if (env.IsExceptionPending()) return env.Null();
+  auto tensor =
+      std::make_shared<mlx::core::array>(mlx::core::sigmoid(a, streamArg));
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// erf(a, stream?) — Gauss error function
+// ---------------------------------------------------------------------------
+Napi::Value Erf(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "erf expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto streamArg = GetStreamArgument(info, 1);
+  if (env.IsExceptionPending()) return env.Null();
+  auto tensor =
+      std::make_shared<mlx::core::array>(mlx::core::erf(a, streamArg));
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// tanh(a, stream?) — hyperbolic tangent
+// ---------------------------------------------------------------------------
+Napi::Value Tanh(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "tanh expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto streamArg = GetStreamArgument(info, 1);
+  if (env.IsExceptionPending()) return env.Null();
+  auto tensor =
+      std::make_shared<mlx::core::array>(mlx::core::tanh(a, streamArg));
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// split(a, indices_or_sections, axis?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value Split(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 2) {
+    Napi::TypeError::New(env, "split expects at least 2 arguments")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  // Determine axis (optional, default 0)
+  int axisArgIdx = 2;
+  int axis = 0;
+  if (info.Length() > 2 && !info[2].IsNull() && !info[2].IsUndefined() &&
+      info[2].IsNumber()) {
+    axis = info[2].As<Napi::Number>().Int32Value();
+    axisArgIdx = 3;
+  }
+
+  auto streamArg = GetStreamArgument(info, axisArgIdx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  std::vector<mlx::core::array> results;
+
+  if (info[1].IsNumber()) {
+    // split(a, num_splits, axis, stream)
+    int numSplits = info[1].As<Napi::Number>().Int32Value();
+    results = mlx::core::split(a, numSplits, axis, streamArg);
+  } else if (info[1].IsArray()) {
+    // split(a, indices, axis, stream)
+    auto arr = info[1].As<Napi::Array>();
+    mlx::core::Shape indices;
+    indices.reserve(arr.Length());
+    for (uint32_t i = 0; i < arr.Length(); ++i) {
+      indices.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    }
+    results = mlx::core::split(a, indices, axis, streamArg);
+  } else {
+    Napi::TypeError::New(env,
+        "split: second argument must be a number or array of indices")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  // Return as JS array of wrapped MLXArrays
+  auto jsArr = Napi::Array::New(env, results.size());
+  for (size_t i = 0; i < results.size(); ++i) {
+    auto tensor = std::make_shared<mlx::core::array>(std::move(results[i]));
+    jsArr.Set(static_cast<uint32_t>(i), WrapArray(env, tensor));
+  }
+  return jsArr;
+}
+
+// ---------------------------------------------------------------------------
+// addmm(c, a, b, alpha?, beta?, stream?) — fused alpha*(a@b) + beta*c
+// ---------------------------------------------------------------------------
+Napi::Value Addmm(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 3) {
+    Napi::TypeError::New(env, "addmm expects at least 3 arguments (c, a, b)")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto c = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto a = ToArray(env, info[1]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto b = ToArray(env, info[2]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  float alpha = 1.0f;
+  float beta = 1.0f;
+  int streamIdx = 3;
+
+  if (info.Length() > 3 && info[3].IsNumber()) {
+    alpha = info[3].As<Napi::Number>().FloatValue();
+    streamIdx = 4;
+  }
+  if (info.Length() > 4 && info[4].IsNumber()) {
+    beta = info[4].As<Napi::Number>().FloatValue();
+    streamIdx = 5;
+  }
+
+  auto streamArg = GetStreamArgument(info, streamIdx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto tensor = std::make_shared<mlx::core::array>(
+      mlx::core::addmm(c, a, b, alpha, beta, streamArg));
+  return WrapArray(env, tensor);
+}
+
+// ---------------------------------------------------------------------------
+// var(a, axes?, keepdims?, ddof?, stream?) — variance reduction
+// ---------------------------------------------------------------------------
+Napi::Value Var(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "var expects at least 1 argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  // Parse optional axes
+  std::optional<std::vector<int>> axes = std::nullopt;
+  int argIdx = 1;
+  if (info.Length() > argIdx && !info[argIdx].IsUndefined() &&
+      !info[argIdx].IsNull()) {
+    if (info[argIdx].IsNumber()) {
+      axes = std::vector<int>{info[argIdx].As<Napi::Number>().Int32Value()};
+      argIdx++;
+    } else if (info[argIdx].IsArray()) {
+      auto arr = info[argIdx].As<Napi::Array>();
+      std::vector<int> axesVec;
+      axesVec.reserve(arr.Length());
+      for (uint32_t i = 0; i < arr.Length(); ++i) {
+        axesVec.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+      }
+      axes = std::move(axesVec);
+      argIdx++;
+    } else if (info[argIdx].IsBoolean()) {
+      // No axes, this is keepdims — leave axes as nullopt
+    } else {
+      argIdx++;
+    }
+  }
+
+  // Parse optional keepdims
+  bool keepdims = false;
+  if (info.Length() > static_cast<size_t>(argIdx) &&
+      info[argIdx].IsBoolean()) {
+    keepdims = info[argIdx].As<Napi::Boolean>().Value();
+    argIdx++;
+  }
+
+  // Parse optional ddof
+  int ddof = 0;
+  if (info.Length() > static_cast<size_t>(argIdx) &&
+      info[argIdx].IsNumber()) {
+    ddof = info[argIdx].As<Napi::Number>().Int32Value();
+    argIdx++;
+  }
+
+  auto streamArg = GetStreamArgument(info, argIdx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  mlx::core::array result = [&]() {
+    if (axes.has_value()) {
+      return mlx::core::var(a, axes.value(), keepdims, ddof, streamArg);
+    } else {
+      return mlx::core::var(a, keepdims, ddof, streamArg);
+    }
+  }();
+
+  return WrapArray(env,
+                   std::make_shared<mlx::core::array>(std::move(result)));
+}
+
+// ---------------------------------------------------------------------------
+// random.bernoulli(p?, shape?, key?, stream?) — Bernoulli samples
+// ---------------------------------------------------------------------------
+Napi::Value Bernoulli(const Napi::CallbackInfo& info) {
   auto env = info.Env();
   auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
-  
+
   try {
     mlx::node::Runtime::Instance().EnsureMetalInit();
   } catch (const std::exception& e) {
     Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
     return env.Null();
   }
-  
+
+  try {
+    // bernoulli(p?, shape?, key?, stream?)
+    // p defaults to 0.5, shape defaults to p.shape or {}
+    mlx::core::array p = mlx::core::array(0.5f);
+    mlx::core::Shape shape;
+    bool hasShape = false;
+    size_t argIdx = 0;
+
+    // Parse optional p (number or MLXArray)
+    if (info.Length() > argIdx && !info[argIdx].IsUndefined() &&
+        !info[argIdx].IsNull()) {
+      if (info[argIdx].IsNumber()) {
+        p = mlx::core::array(
+            static_cast<float>(info[argIdx].As<Napi::Number>().DoubleValue()));
+        argIdx++;
+      } else if (info[argIdx].IsObject() && !info[argIdx].IsArray()) {
+        // Could be MLXArray
+        auto obj = info[argIdx].As<Napi::Object>();
+        auto ctor = addon->array_constructor.Value();
+        if (!ctor.IsEmpty() && obj.InstanceOf(ctor)) {
+          auto* wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(obj);
+          if (wrapper) {
+            p = wrapper->tensor();
+          }
+          argIdx++;
+        }
+      }
+    }
+
+    // Parse optional shape
+    if (info.Length() > argIdx && info[argIdx].IsArray()) {
+      auto shapeArr = info[argIdx].As<Napi::Array>();
+      shape.reserve(shapeArr.Length());
+      for (uint32_t i = 0; i < shapeArr.Length(); ++i) {
+        shape.push_back(shapeArr.Get(i).As<Napi::Number>().Int32Value());
+      }
+      hasShape = true;
+      argIdx++;
+    }
+
+    // Parse optional key
+    std::optional<mlx::core::array> key;
+    if (info.Length() > argIdx && info[argIdx].IsObject() &&
+        !info[argIdx].IsArray()) {
+      auto obj = info[argIdx].As<Napi::Object>();
+      auto ctor = addon->array_constructor.Value();
+      if (!ctor.IsEmpty() && obj.InstanceOf(ctor)) {
+        auto* wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(obj);
+        if (wrapper) {
+          key = wrapper->tensor();
+        }
+        argIdx++;
+      }
+    }
+
+    if (!key.has_value()) {
+      key = mlx::core::random::KeySequence::default_().next();
+    }
+
+    auto streamArg = GetStreamArgument(info, argIdx);
+    if (env.IsExceptionPending()) return env.Null();
+
+    mlx::core::array result = [&]() {
+      if (hasShape) {
+        return mlx::core::random::bernoulli(p, shape, key, streamArg);
+      } else {
+        return mlx::core::random::bernoulli(p, key, streamArg);
+      }
+    }();
+
+    return WrapArray(env,
+                     std::make_shared<mlx::core::array>(std::move(result)));
+  } catch (const std::exception& e) {
+    Napi::Error::New(env,
+                     std::string("random.bernoulli failed: ") + e.what())
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// stack(arrays, axis?, stream?) — stack arrays along a new axis
+// ---------------------------------------------------------------------------
+Napi::Value Stack(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1 || !info[0].IsArray()) {
+    Napi::TypeError::New(env, "stack expects an array of arrays as first arg")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  auto jsArr = info[0].As<Napi::Array>();
+  std::vector<mlx::core::array> arrays;
+  arrays.reserve(jsArr.Length());
+  for (uint32_t i = 0; i < jsArr.Length(); ++i) {
+    auto val = jsArr.Get(i);
+    if (!val.IsObject()) {
+      Napi::TypeError::New(env, "stack: all elements must be arrays")
+          .ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    auto* wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+        val.As<Napi::Object>());
+    if (!wrapper) {
+      Napi::TypeError::New(env, "stack: invalid array element")
+          .ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    arrays.push_back(wrapper->tensor());
+  }
+
+  int axis = 0;
+  int argIdx = 1;
+  if (info.Length() > 1 && info[1].IsNumber()) {
+    axis = info[1].As<Napi::Number>().Int32Value();
+    argIdx = 2;
+  }
+
+  auto streamArg = GetStreamArgument(info, argIdx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto result = std::make_shared<mlx::core::array>(
+      mlx::core::stack(arrays, axis, streamArg));
+  return WrapArray(env, result);
+}
+
+// ---------------------------------------------------------------------------
+// conv1d(input, weight, stride?, padding?, dilation?, groups?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value Conv1d(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 2) {
+    Napi::TypeError::New(env, "conv1d expects at least 2 arguments")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  auto* inputW = UnwrapArray(env, info[0]);
+  auto* weightW = UnwrapArray(env, info[1]);
+  if (env.IsExceptionPending() || !inputW || !weightW) return env.Null();
+
+  int stride = 1, padding = 0, dilation = 1, groups = 1;
+  int argIdx = 2;
+
+  if (info.Length() > argIdx && info[argIdx].IsNumber()) {
+    stride = info[argIdx++].As<Napi::Number>().Int32Value();
+  }
+  if (info.Length() > argIdx && info[argIdx].IsNumber()) {
+    padding = info[argIdx++].As<Napi::Number>().Int32Value();
+  }
+  if (info.Length() > argIdx && info[argIdx].IsNumber()) {
+    dilation = info[argIdx++].As<Napi::Number>().Int32Value();
+  }
+  if (info.Length() > argIdx && info[argIdx].IsNumber()) {
+    groups = info[argIdx++].As<Napi::Number>().Int32Value();
+  }
+
+  auto streamArg = GetStreamArgument(info, argIdx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto result = std::make_shared<mlx::core::array>(mlx::core::conv1d(
+      inputW->tensor(), weightW->tensor(), stride, padding, dilation, groups,
+      streamArg));
+  return WrapArray(env, result);
+}
+
+// ---------------------------------------------------------------------------
+// conv2d(input, weight, stride?, padding?, dilation?, groups?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value Conv2d(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 2) {
+    Napi::TypeError::New(env, "conv2d expects at least 2 arguments")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  auto* inputW = UnwrapArray(env, info[0]);
+  auto* weightW = UnwrapArray(env, info[1]);
+  if (env.IsExceptionPending() || !inputW || !weightW) return env.Null();
+
+  // Parse stride, padding, dilation as pairs
+  auto parsePair = [&](int idx, std::pair<int,int> def) -> std::pair<int,int> {
+    if (info.Length() <= static_cast<size_t>(idx)) return def;
+    if (info[idx].IsNumber()) {
+      int v = info[idx].As<Napi::Number>().Int32Value();
+      return {v, v};
+    }
+    if (info[idx].IsArray()) {
+      auto arr = info[idx].As<Napi::Array>();
+      if (arr.Length() >= 2) {
+        return {
+          arr.Get((uint32_t)0).As<Napi::Number>().Int32Value(),
+          arr.Get((uint32_t)1).As<Napi::Number>().Int32Value()
+        };
+      }
+    }
+    return def;
+  };
+
+  int argIdx = 2;
+  auto stride = parsePair(argIdx, {1, 1});
+  if (info.Length() > static_cast<size_t>(argIdx) && (info[argIdx].IsNumber() || info[argIdx].IsArray())) argIdx++;
+  auto padding = parsePair(argIdx, {0, 0});
+  if (info.Length() > static_cast<size_t>(argIdx) && (info[argIdx].IsNumber() || info[argIdx].IsArray())) argIdx++;
+  auto dilation = parsePair(argIdx, {1, 1});
+  if (info.Length() > static_cast<size_t>(argIdx) && (info[argIdx].IsNumber() || info[argIdx].IsArray())) argIdx++;
+
+  int groups = 1;
+  if (info.Length() > static_cast<size_t>(argIdx) && info[argIdx].IsNumber()) {
+    groups = info[argIdx++].As<Napi::Number>().Int32Value();
+  }
+
+  auto streamArg = GetStreamArgument(info, argIdx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto result = std::make_shared<mlx::core::array>(mlx::core::conv2d(
+      inputW->tensor(), weightW->tensor(),
+      stride, padding, dilation, groups, streamArg));
+  return WrapArray(env, result);
+}
+
+// ---------------------------------------------------------------------------
+// conv3d(input, weight, stride?, padding?, dilation?, groups?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value Conv3d(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 2) {
+    Napi::TypeError::New(env, "conv3d expects at least 2 arguments")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  auto* inputW = UnwrapArray(env, info[0]);
+  auto* weightW = UnwrapArray(env, info[1]);
+  if (env.IsExceptionPending() || !inputW || !weightW) return env.Null();
+
+  auto parseTuple3 = [&](int idx,
+                         std::tuple<int,int,int> def) -> std::tuple<int,int,int> {
+    if (info.Length() <= static_cast<size_t>(idx)) return def;
+    if (info[idx].IsNumber()) {
+      int v = info[idx].As<Napi::Number>().Int32Value();
+      return {v, v, v};
+    }
+    if (info[idx].IsArray()) {
+      auto arr = info[idx].As<Napi::Array>();
+      if (arr.Length() >= 3) {
+        return {
+          arr.Get((uint32_t)0).As<Napi::Number>().Int32Value(),
+          arr.Get((uint32_t)1).As<Napi::Number>().Int32Value(),
+          arr.Get((uint32_t)2).As<Napi::Number>().Int32Value()
+        };
+      }
+    }
+    return def;
+  };
+
+  int argIdx = 2;
+  auto stride = parseTuple3(argIdx, {1, 1, 1});
+  if (info.Length() > static_cast<size_t>(argIdx) && (info[argIdx].IsNumber() || info[argIdx].IsArray())) argIdx++;
+  auto padding = parseTuple3(argIdx, {0, 0, 0});
+  if (info.Length() > static_cast<size_t>(argIdx) && (info[argIdx].IsNumber() || info[argIdx].IsArray())) argIdx++;
+  auto dilation = parseTuple3(argIdx, {1, 1, 1});
+  if (info.Length() > static_cast<size_t>(argIdx) && (info[argIdx].IsNumber() || info[argIdx].IsArray())) argIdx++;
+
+  // groups (int, default 1)
+  int groups = 1;
+  if (info.Length() > static_cast<size_t>(argIdx) && info[argIdx].IsNumber()) {
+    groups = info[argIdx].As<Napi::Number>().Int32Value();
+    argIdx++;
+  }
+
+  auto streamArg = GetStreamArgument(info, argIdx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto result = std::make_shared<mlx::core::array>(mlx::core::conv3d(
+      inputW->tensor(), weightW->tensor(),
+      stride, padding, dilation, groups, streamArg));
+  return WrapArray(env, result);
+}
+
+// ---------------------------------------------------------------------------
+// take(a, indices, axis?, stream?) — gather elements by index
+// ---------------------------------------------------------------------------
+Napi::Value Take(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 2) {
+    Napi::TypeError::New(env, "take expects at least 2 arguments (a, indices)")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto indices = ToArray(env, info[1]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  // Ensure indices are integral (cast from float if needed)
+  if (!mlx::core::issubdtype(indices.dtype(), mlx::core::integer)) {
+    indices = mlx::core::astype(indices, mlx::core::int32);
+  }
+
+  int argIdx = 2;
+  std::optional<int> axis;
+  if (info.Length() > 2 && info[2].IsNumber()) {
+    axis = info[2].As<Napi::Number>().Int32Value();
+    argIdx = 3;
+  }
+
+  auto streamArg = GetStreamArgument(info, argIdx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  mlx::core::array result = [&]() {
+    if (axis.has_value()) {
+      return mlx::core::take(a, indices, axis.value(), streamArg);
+    } else {
+      return mlx::core::take(a, indices, streamArg);
+    }
+  }();
+
+  return WrapArray(env,
+                   std::make_shared<mlx::core::array>(std::move(result)));
+}
+
+// ---------------------------------------------------------------------------
+// pad(a, pad_width, pad_value?, stream?)
+// pad_width is an array of [low, high] pairs, one per axis
+// ---------------------------------------------------------------------------
+Napi::Value Pad(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 2) {
+    Napi::TypeError::New(env, "pad expects at least 2 arguments (a, pad_width)")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  // Parse pad_width: array of [low, high] pairs
+  std::vector<std::pair<int, int>> pad_width;
+  if (info[1].IsArray()) {
+    auto arr = info[1].As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); i++) {
+      auto pair = arr.Get(i).As<Napi::Array>();
+      int low = pair.Get(static_cast<uint32_t>(0)).As<Napi::Number>().Int32Value();
+      int high = pair.Get(static_cast<uint32_t>(1)).As<Napi::Number>().Int32Value();
+      pad_width.push_back({low, high});
+    }
+  }
+
+  int argIdx = 2;
+  mlx::core::array pad_value = mlx::core::array(0);
+  if (static_cast<size_t>(argIdx) < info.Length() && !info[argIdx].IsUndefined() && !info[argIdx].IsNull()) {
+    // Accept number or MLXArray for pad_value
+    if (info[argIdx].IsNumber()) {
+      pad_value = mlx::core::array(info[argIdx].As<Napi::Number>().DoubleValue());
+      argIdx++;
+    } else if (info[argIdx].IsObject()) {
+      pad_value = ToArray(env, info[argIdx]);
+      if (env.IsExceptionPending()) return env.Null();
+      argIdx++;
+    }
+  }
+
+  auto streamArg = GetStreamArgument(info, argIdx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto result = std::make_shared<mlx::core::array>(
+      mlx::core::pad(a, pad_width, pad_value, "constant", streamArg));
+  return WrapArray(env, result);
+}
+
+// ---------------------------------------------------------------------------
+// slice(a, start, stop, strides?, stream?) — extract a sub-array
+// ---------------------------------------------------------------------------
+Napi::Value Slice(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 3) {
+    Napi::TypeError::New(env, "slice expects at least 3 arguments (a, start, stop)")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto parseShape = [&](Napi::Value val) -> mlx::core::Shape {
+    mlx::core::Shape s;
+    if (val.IsArray()) {
+      auto arr = val.As<Napi::Array>();
+      for (uint32_t i = 0; i < arr.Length(); i++) {
+        s.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+      }
+    }
+    return s;
+  };
+
+  auto start = parseShape(info[1]);
+  auto stop = parseShape(info[2]);
+
+  int argIdx = 3;
+  mlx::core::Shape strides;
+  if (info.Length() > 3 && info[3].IsArray()) {
+    strides = parseShape(info[3]);
+    argIdx = 4;
+  }
+
+  auto streamArg = GetStreamArgument(info, argIdx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  mlx::core::array result = [&]() {
+    if (strides.empty()) {
+      return mlx::core::slice(a, start, stop, streamArg);
+    } else {
+      return mlx::core::slice(a, start, stop, strides, streamArg);
+    }
+  }();
+
+  return WrapArray(env, std::make_shared<mlx::core::array>(std::move(result)));
+}
+
+// ---------------------------------------------------------------------------
+// as_strided(a, shape, strides, offset, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value AsStrided(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 4) {
+    Napi::TypeError::New(env,
+        "as_strided expects 4 arguments (a, shape, strides, offset)")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto parseShape = [&](Napi::Value val) -> mlx::core::Shape {
+    mlx::core::Shape s;
+    if (val.IsArray()) {
+      auto arr = val.As<Napi::Array>();
+      for (uint32_t i = 0; i < arr.Length(); i++) {
+        s.push_back(arr.Get(i).As<Napi::Number>().Int64Value());
+      }
+    }
+    return s;
+  };
+
+  auto shape = parseShape(info[1]);
+
+  // Parse strides as Strides (SmallVector<int64_t>)
+  mlx::core::Strides strides;
+  if (info[2].IsArray()) {
+    auto arr = info[2].As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); i++) {
+      strides.push_back(arr.Get(i).As<Napi::Number>().Int64Value());
+    }
+  }
+
+  size_t offset = 0;
+  if (info[3].IsNumber()) {
+    offset = static_cast<size_t>(info[3].As<Napi::Number>().Int64Value());
+  }
+
+  auto streamArg = GetStreamArgument(info, 4);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto result = std::make_shared<mlx::core::array>(
+      mlx::core::as_strided(a, shape, strides, offset, streamArg));
+  return WrapArray(env, result);
+}
+
+// ---------------------------------------------------------------------------
+// scaled_dot_product_attention(q, k, v, scale, mask?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value ScaledDotProductAttention(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 4) {
+    Napi::TypeError::New(env,
+        "scaled_dot_product_attention expects at least 4 arguments (q, k, v, scale)")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  auto* qW = UnwrapArray(env, info[0]);
+  auto* kW = UnwrapArray(env, info[1]);
+  auto* vW = UnwrapArray(env, info[2]);
+  if (env.IsExceptionPending() || !qW || !kW || !vW) return env.Null();
+
+  float scale = info[3].As<Napi::Number>().FloatValue();
+
+  int argIdx = 4;
+  std::string mask_mode = "";
+  std::vector<mlx::core::array> mask_arrs;
+
+  // Optional mask: can be an MLXArray or the string "causal"
+  if (static_cast<size_t>(argIdx) < info.Length() && !info[argIdx].IsNull() && !info[argIdx].IsUndefined()) {
+    if (info[argIdx].IsString()) {
+      mask_mode = info[argIdx].As<Napi::String>().Utf8Value();
+      argIdx++;
+    } else if (info[argIdx].IsObject()) {
+      auto* maskW = UnwrapArray(env, info[argIdx]);
+      if (maskW && !env.IsExceptionPending()) {
+        mask_mode = "array";
+        mask_arrs.push_back(maskW->tensor());
+        argIdx++;
+      }
+    }
+  }
+
+  auto streamArg = GetStreamArgument(info, argIdx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto result = std::make_shared<mlx::core::array>(
+      mlx::core::fast::scaled_dot_product_attention(
+          qW->tensor(), kW->tensor(), vW->tensor(),
+          scale, mask_mode, mask_arrs, streamArg));
+  return WrapArray(env, result);
+}
+
+// ---------------------------------------------------------------------------
+// number_of_elements(a, axes?, inverted?, dtype?, stream?)
+// ---------------------------------------------------------------------------
+Napi::Value NumberOfElements(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "number_of_elements expects at least 1 argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  std::vector<int> axes;
+  bool inverted = false;
+  mlx::core::Dtype dtype = mlx::core::int32;
+  int argIdx = 1;
+
+  // axes
+  if (info.Length() > static_cast<size_t>(argIdx) && info[argIdx].IsArray()) {
+    auto arr = info[argIdx].As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); i++) {
+      axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    }
+    argIdx++;
+  }
+
+  // inverted
+  if (info.Length() > static_cast<size_t>(argIdx) && info[argIdx].IsBoolean()) {
+    inverted = info[argIdx].As<Napi::Boolean>().Value();
+    argIdx++;
+  }
+
+  auto streamArg = GetStreamArgument(info, argIdx);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto result = std::make_shared<mlx::core::array>(
+      mlx::core::number_of_elements(a, axes, inverted, dtype, streamArg));
+  return WrapArray(env, result);
+}
+
+/**
+ * Import a function from a .mlxfn file.
+ *
+ * Returns a callable JavaScript function that can be invoked with:
+ * - Positional array arguments: fn(a, b, c)
+ * - A single array/list of arrays: fn([a, b, c])
+ * - A single object/dict of arrays: fn({x: a, y: b})
+ * - Combined: fn([a, b], {x: c, y: d})
+ *
+ * The returned function always returns a tuple (array) of output arrays.
+ *
+ * Args:
+ *   - file (string): Path to the .mlxfn file
+ *
+ * Returns: A JavaScript function wrapping the imported MLX function
+ */
+Napi::Value ImportFunction(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+
+  try {
+    mlx::node::Runtime::Instance().EnsureMetalInit();
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
   // Parse file path argument
   if (info.Length() < 1 || !info[0].IsString()) {
     Napi::TypeError::New(env, "import_function expects a string file path")
         .ThrowAsJavaScriptException();
     return env.Null();
   }
-  
+
   std::string file_path = info[0].As<Napi::String>().Utf8Value();
-  
+
   try {
     // Import the function from file
     auto imported_fn = mlx::core::import_function(file_path);
-    
+
     // Create a shared pointer to keep the imported function alive
     auto fn_ptr = std::make_shared<mlx::core::ImportedFunction>(std::move(imported_fn));
-    
+
     // Create a JavaScript function that captures the imported function
     auto js_function = Napi::Function::New(
         env,
         [fn_ptr, addon](const Napi::CallbackInfo& call_info) -> Napi::Value {
           auto call_env = call_info.Env();
-          
+
           try {
             mlx::core::Args args;
             mlx::core::Kwargs kwargs;
-            
+
             // Parse arguments based on how they're provided
             if (call_info.Length() == 0) {
               // No arguments
@@ -3243,7 +4867,7 @@ Napi::Value ImportFunction(const Napi::CallbackInfo& info) {
               } else if (call_info[0].IsObject()) {
                 auto obj = call_info[0].As<Napi::Object>();
                 auto ctor = addon->array_constructor.Value();
-                
+
                 // Check if it's an MLX array
                 if (!ctor.IsEmpty() && obj.InstanceOf(ctor)) {
                   const auto* wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(obj);
@@ -3290,7 +4914,7 @@ Napi::Value ImportFunction(const Napi::CallbackInfo& info) {
                   }
                 }
               }
-              
+
               // Second argument should be an object (kwargs)
               if (call_info[1].IsObject()) {
                 auto obj = call_info[1].As<Napi::Object>();
@@ -3328,7 +4952,7 @@ Napi::Value ImportFunction(const Napi::CallbackInfo& info) {
                 }
               }
             }
-            
+
             // Call the imported function
             std::vector<mlx::core::array> results;
             if (!args.empty() && !kwargs.empty()) {
@@ -3338,7 +4962,7 @@ Napi::Value ImportFunction(const Napi::CallbackInfo& info) {
             } else {
               results = (*fn_ptr)(args);
             }
-            
+
             // Return results as an array (tuple)
             auto result_array = Napi::Array::New(call_env, results.size());
             for (size_t i = 0; i < results.size(); i++) {
@@ -3347,7 +4971,7 @@ Napi::Value ImportFunction(const Napi::CallbackInfo& info) {
                   WrapArray(call_env, std::make_shared<mlx::core::array>(std::move(results[i]))));
             }
             return result_array;
-            
+
           } catch (const std::exception& e) {
             Napi::Error::New(call_env, std::string("Imported function call failed: ") + e.what())
                 .ThrowAsJavaScriptException();
@@ -3355,9 +4979,9 @@ Napi::Value ImportFunction(const Napi::CallbackInfo& info) {
           }
         },
         "imported_function");
-    
+
     return js_function;
-    
+
   } catch (const std::exception& e) {
     Napi::Error::New(env, std::string("import_function failed: ") + e.what())
         .ThrowAsJavaScriptException();
@@ -3430,9 +5054,67 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   core.Set("greater_equal", Napi::Function::New(env, GreaterEqual, "greater_equal", &data));
   core.Set("maximum", Napi::Function::New(env, Maximum, "maximum", &data));
   core.Set("minimum", Napi::Function::New(env, Minimum, "minimum", &data));
-  
-  // Export/Import functions
-  core.Set("import_function", Napi::Function::New(env, ImportFunction, "import_function", &data));
+
+  // Reduction ops
+  core.Set("sum", Napi::Function::New(env, Sum, "sum", &data));
+  core.Set("mean", Napi::Function::New(env, Mean, "mean", &data));
+  core.Set("min", Napi::Function::New(env, Min, "min", &data));
+  core.Set("max", Napi::Function::New(env, Max, "max", &data));
+  core.Set("prod", Napi::Function::New(env, Prod, "prod", &data));
+  core.Set("argmin", Napi::Function::New(env, Argmin, "argmin", &data));
+  core.Set("argmax", Napi::Function::New(env, Argmax, "argmax", &data));
+  core.Set("logsumexp", Napi::Function::New(env, LogSumExp, "logsumexp", &data));
+  core.Set("logcumsumexp", Napi::Function::New(env, LogCumSumExp, "logcumsumexp", &data));
+  core.Set("softmax", Napi::Function::New(env, Softmax, "softmax", &data));
+
+  // Additional math ops
+  core.Set("logaddexp", Napi::Function::New(env, LogAddExp, "logaddexp", &data));
+  core.Set("clip", Napi::Function::New(env, Clip, "clip", &data));
+  core.Set("log1p", Napi::Function::New(env, Log1p, "log1p", &data));
+  core.Set("negative", Napi::Function::New(env, Negative, "negative", &data));
+  core.Set("reciprocal", Napi::Function::New(env, Reciprocal, "reciprocal", &data));
+
+  // Shape manipulation
+  core.Set("expand_dims", Napi::Function::New(env, ExpandDims, "expand_dims", &data));
+  core.Set("squeeze", Napi::Function::New(env, Squeeze, "squeeze", &data));
+  core.Set("concatenate", Napi::Function::New(env, Concatenate, "concatenate", &data));
+
+  // Activation primitives
+  core.Set("sigmoid", Napi::Function::New(env, Sigmoid, "sigmoid", &data));
+  core.Set("erf", Napi::Function::New(env, Erf, "erf", &data));
+  core.Set("tanh", Napi::Function::New(env, Tanh, "tanh", &data));
+  core.Set("split", Napi::Function::New(env, Split, "split", &data));
+
+  // Shape manipulation / stacking
+  core.Set("stack", Napi::Function::New(env, Stack, "stack", &data));
+
+  // Convolution ops
+  core.Set("conv1d", Napi::Function::New(env, Conv1d, "conv1d", &data));
+  core.Set("conv2d", Napi::Function::New(env, Conv2d, "conv2d", &data));
+  core.Set("conv3d", Napi::Function::New(env, Conv3d, "conv3d", &data));
+
+  // Indexing
+  core.Set("take", Napi::Function::New(env, Take, "take", &data));
+  core.Set("take_along_axis", Napi::Function::New(env, TakeAlongAxis, "take_along_axis", &data));
+  core.Set("pad", Napi::Function::New(env, Pad, "pad", &data));
+  core.Set("slice", Napi::Function::New(env, Slice, "slice", &data));
+  core.Set("as_strided", Napi::Function::New(env, AsStrided, "as_strided", &data));
+  core.Set("number_of_elements", Napi::Function::New(env, NumberOfElements, "number_of_elements", &data));
+
+  // fast namespace
+  Napi::Object fast = Napi::Object::New(env);
+  fast.Set("scaled_dot_product_attention",
+           Napi::Function::New(env, ScaledDotProductAttention,
+                               "scaled_dot_product_attention", &data));
+  core.Set("fast", fast);
+
+  // Fused linear algebra ops
+  core.Set("addmm", Napi::Function::New(env, Addmm, "addmm", &data));
+
+  // Additional reduction ops
+  core.Set("var", Napi::Function::New(env, Var, "var", &data));
+  core.Set("std", Napi::Function::New(env, Std, "std", &data));
+  core.Set("trace", Napi::Function::New(env, Trace, "trace", &data));
 
   // NN init functions
   Napi::Object nn_init = Napi::Object::New(env);
@@ -3442,7 +5124,16 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   Napi::Object random = Napi::Object::New(env);
   random.Set("uniform", Napi::Function::New(env, RandomUniform, "uniform", &data));
   random.Set("normal", Napi::Function::New(env, Normal, "normal", &data));
+  random.Set("bernoulli", Napi::Function::New(env, Bernoulli, "bernoulli", &data));
   core.Set("random", random);
+
+  // Linear algebra operations under core.linalg (matches mlx.core.linalg.*)
+  Napi::Object linalg = Napi::Object::New(env);
+  linalg.Set("norm", Napi::Function::New(env, Norm, "norm", &data));
+  core.Set("linalg", linalg);
+
+  // Export/import operations
+  core.Set("import_function", Napi::Function::New(env, ImportFunction, "import_function", &data));
 
   mlx.Set("core", core);
   mlx.Set("nn_init", nn_init);
