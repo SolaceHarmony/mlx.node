@@ -172,15 +172,15 @@ export function subtract(
 export interface WhereOptions extends StreamOptions {}
 
 export function where(
-  condition: MLXArray,
-  onTrue: MLXArray,
-  onFalse: MLXArray,
+  condition: ScalarOrArray,
+  onTrue: ScalarOrArray,
+  onFalse: ScalarOrArray,
   options?: WhereOptions,
 ): MLXArray {
   const args: any[] = [
-    toNativeHandle(condition),
-    toNativeHandle(onTrue),
-    toNativeHandle(onFalse),
+    toNativeScalarOrArray(condition),
+    toNativeScalarOrArray(onTrue),
+    toNativeScalarOrArray(onFalse),
   ];
   appendStreamArg(args, options?.stream);
   const handle = addon.where(...args);
@@ -490,6 +490,41 @@ export function matmul(
   return MLXArray.fromHandle(handle);
 }
 
+// ---------------------------------------------------------------------------
+// Fused linear algebra ops
+// ---------------------------------------------------------------------------
+
+export interface AddmmOptions extends StreamOptions {}
+
+/**
+ * Compute alpha * (a @ b) + beta * c.
+ *
+ * Fused add-multiply-multiply: useful as the forward pass of a linear layer.
+ *
+ * @param c - Bias array
+ * @param a - First input matrix
+ * @param b - Second input matrix
+ * @param alpha - Scalar multiplier for a @ b (default 1.0)
+ * @param beta - Scalar multiplier for c (default 1.0)
+ * @param options - Optional stream configuration
+ * @returns The result of alpha * (a @ b) + beta * c
+ */
+export function addmm(
+  c: MLXArray,
+  a: MLXArray,
+  b: MLXArray,
+  alpha?: number,
+  beta?: number,
+  options?: AddmmOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(c), toNativeHandle(a), toNativeHandle(b)];
+  if (alpha !== undefined) args.push(alpha);
+  if (beta !== undefined) args.push(beta);
+  appendStreamArg(args, options?.stream);
+  const handle = addon.addmm(...args);
+  return MLXArray.fromHandle(handle);
+}
+
 export interface NormalOptions extends StreamOptions {
   dtype?: DTypeLike;
   loc?: number | MLXArray;
@@ -552,6 +587,42 @@ export namespace random {
     appendStreamArg(args, options?.stream);
 
     const handle = addon.random.normal(...args);
+    return MLXArray.fromHandle(handle);
+  }
+
+  export interface BernoulliOptions extends StreamOptions {
+    key?: MLXArray;
+  }
+
+  /**
+   * Generate Bernoulli random samples.
+   *
+   * @param p - Probability of a 1 (default 0.5). Can be a number or MLXArray.
+   * @param shape - Optional shape of the output array. If not provided, uses p.shape.
+   * @param options - Optional configuration (key, stream)
+   * @returns Array of boolean Bernoulli samples
+   */
+  export function bernoulli(
+    p?: number | MLXArray,
+    shape?: readonly number[],
+    options?: BernoulliOptions,
+  ): MLXArray {
+    const args: any[] = [];
+    if (p !== undefined) {
+      if (p instanceof MLXArray) {
+        args.push(toNativeHandle(p));
+      } else {
+        args.push(p);
+      }
+    }
+    if (shape !== undefined) {
+      args.push(normalizeShapeInput(shape));
+    }
+    if (options?.key !== undefined) {
+      args.push(toNativeHandle(options.key));
+    }
+    appendStreamArg(args, options?.stream);
+    const handle = addon.random.bernoulli(...args);
     return MLXArray.fromHandle(handle);
   }
 
@@ -680,4 +751,843 @@ export function import_function(file: string): (...args: any[]) => MLXArray[] {
     
     return resultHandles.map(handle => MLXArray.fromHandle(handle));
   };
+}
+
+// ---------------------------------------------------------------------------
+// Reduction ops
+// ---------------------------------------------------------------------------
+
+export type AxisSpec = number | readonly number[] | null;
+
+export interface ReductionOptions extends StreamOptions {
+  keepdims?: boolean;
+}
+
+function normalizeAxisArg(axis?: AxisSpec): number[] | undefined {
+  if (axis === null || axis === undefined) {
+    return undefined;
+  }
+  if (typeof axis === 'number') {
+    return [axis];
+  }
+  return Array.from(axis);
+}
+
+export function sum(
+  a: MLXArray,
+  axis?: AxisSpec,
+  options?: ReductionOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  const nativeAxis = normalizeAxisArg(axis);
+  args.push(nativeAxis ?? null);
+  if (options?.keepdims) {
+    args.push(true);
+  }
+  appendStreamArg(args, options?.stream);
+  const handle = addon.sum(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export function mean(
+  a: MLXArray,
+  axis?: AxisSpec,
+  options?: ReductionOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  const nativeAxis = normalizeAxisArg(axis);
+  args.push(nativeAxis ?? null);
+  if (options?.keepdims) {
+    args.push(true);
+  }
+  appendStreamArg(args, options?.stream);
+  const handle = addon.mean(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export interface VarOptions extends ReductionOptions {
+  ddof?: number;
+}
+
+/**
+ * Compute the variance along the given axes.
+ *
+ * @param a - Input array
+ * @param axis - Optional axis or axes along which to compute variance
+ * @param options - Optional configuration (keepdims, ddof, stream)
+ * @returns The variance array
+ */
+export function variance(
+  a: MLXArray,
+  axis?: AxisSpec,
+  options?: VarOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  const nativeAxis = normalizeAxisArg(axis);
+  if (nativeAxis !== undefined) {
+    args.push(nativeAxis);
+  }
+  if (options?.keepdims) {
+    args.push(true);
+  } else if (options?.ddof !== undefined) {
+    args.push(false); // must push keepdims before ddof
+  }
+  if (options?.ddof !== undefined) {
+    args.push(options.ddof);
+  }
+  appendStreamArg(args, options?.stream);
+  const handle = addon.var(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export function logsumexp(
+  a: MLXArray,
+  axis?: AxisSpec,
+  options?: ReductionOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  const nativeAxis = normalizeAxisArg(axis);
+  args.push(nativeAxis ?? null);
+  if (options?.keepdims) {
+    args.push(true);
+  }
+  appendStreamArg(args, options?.stream);
+  const handle = addon.logsumexp(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+/**
+ * A min reduction over the given axes.
+ *
+ * @param a - Input array
+ * @param axis - Optional axis or axes along which to compute min
+ * @param options - Optional configuration (keepdims, stream)
+ * @returns The min array
+ */
+export function min(
+  a: MLXArray,
+  axis?: AxisSpec,
+  options?: ReductionOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  const nativeAxis = normalizeAxisArg(axis);
+  args.push(nativeAxis ?? null);
+  if (options?.keepdims) {
+    args.push(true);
+  }
+  appendStreamArg(args, options?.stream);
+  const handle = addon.min(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+/**
+ * A max reduction over the given axes.
+ *
+ * @param a - Input array
+ * @param axis - Optional axis or axes along which to compute max
+ * @param options - Optional configuration (keepdims, stream)
+ * @returns The max array
+ */
+export function max(
+  a: MLXArray,
+  axis?: AxisSpec,
+  options?: ReductionOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  const nativeAxis = normalizeAxisArg(axis);
+  args.push(nativeAxis ?? null);
+  if (options?.keepdims) {
+    args.push(true);
+  }
+  appendStreamArg(args, options?.stream);
+  const handle = addon.max(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+/**
+ * A product reduction over the given axes.
+ *
+ * @param a - Input array
+ * @param axis - Optional axis or axes along which to compute product
+ * @param options - Optional configuration (keepdims, stream)
+ * @returns The product array
+ */
+export function prod(
+  a: MLXArray,
+  axis?: AxisSpec,
+  options?: ReductionOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  const nativeAxis = normalizeAxisArg(axis);
+  args.push(nativeAxis ?? null);
+  if (options?.keepdims) {
+    args.push(true);
+  }
+  appendStreamArg(args, options?.stream);
+  const handle = addon.prod(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+/**
+ * Indices of the minimum values along the axis.
+ *
+ * @param a - Input array
+ * @param axis - Optional axis along which to find argmin. If omitted, argmin over flattened array.
+ * @param options - Optional configuration (keepdims, stream)
+ * @returns The argmin indices array
+ */
+export function argmin(
+  a: MLXArray,
+  axis?: number | null,
+  options?: ReductionOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  if (axis !== undefined && axis !== null) {
+    args.push(axis);
+  }
+  if (options?.keepdims) {
+    args.push(true);
+  }
+  appendStreamArg(args, options?.stream);
+  const handle = addon.argmin(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+/**
+ * Indices of the maximum values along the axis.
+ *
+ * @param a - Input array
+ * @param axis - Optional axis along which to find argmax. If omitted, argmax over flattened array.
+ * @param options - Optional configuration (keepdims, stream)
+ * @returns The argmax indices array
+ */
+export function argmax(
+  a: MLXArray,
+  axis?: number | null,
+  options?: ReductionOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  if (axis !== undefined && axis !== null) {
+    args.push(axis);
+  }
+  if (options?.keepdims) {
+    args.push(true);
+  }
+  appendStreamArg(args, options?.stream);
+  const handle = addon.argmax(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export interface StdOptions extends ReductionOptions {
+  ddof?: number;
+}
+
+/**
+ * Compute the standard deviation along the given axes.
+ *
+ * @param a - Input array
+ * @param axis - Optional axis or axes along which to compute std
+ * @param options - Optional configuration (keepdims, ddof, stream)
+ * @returns The standard deviation array
+ */
+export function std(
+  a: MLXArray,
+  axis?: AxisSpec,
+  options?: StdOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  const nativeAxis = normalizeAxisArg(axis);
+  if (nativeAxis !== undefined) {
+    args.push(nativeAxis);
+  }
+  if (options?.keepdims) {
+    args.push(true);
+  } else if (options?.ddof !== undefined) {
+    args.push(false); // must push keepdims before ddof
+  }
+  if (options?.ddof !== undefined) {
+    args.push(options.ddof);
+  }
+  appendStreamArg(args, options?.stream);
+  const handle = addon.std(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export interface LogCumSumExpOptions extends StreamOptions {
+  reverse?: boolean;
+}
+
+/**
+ * Return the cumulative logsumexp of the elements along the given axis.
+ *
+ * @param a - Input array
+ * @param axis - Axis along which to compute (required)
+ * @param options - Optional configuration (reverse, stream)
+ * @returns The cumulative logsumexp array
+ */
+export function logcumsumexp(
+  a: MLXArray,
+  axis: number,
+  options?: LogCumSumExpOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a), axis];
+  if (options?.reverse) {
+    args.push(true);
+  }
+  appendStreamArg(args, options?.stream);
+  const handle = addon.logcumsumexp(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export interface TraceOptions extends StreamOptions {
+  dtype?: any;
+}
+
+/**
+ * Return the sum along a specified diagonal in the given array.
+ *
+ * @param a - Input array
+ * @param offset - Offset of the diagonal from the main diagonal (default 0)
+ * @param axis1 - First axis of the 2-D sub-arrays (default 0)
+ * @param axis2 - Second axis of the 2-D sub-arrays (default 1)
+ * @param options - Optional configuration (dtype, stream)
+ * @returns The trace array
+ */
+export function trace(
+  a: MLXArray,
+  offset?: number,
+  axis1?: number,
+  axis2?: number,
+  options?: TraceOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  if (offset !== undefined) args.push(offset);
+  if (axis1 !== undefined) args.push(axis1);
+  if (axis2 !== undefined) args.push(axis2);
+  if (options?.dtype !== undefined) args.push(options.dtype);
+  appendStreamArg(args, options?.stream);
+  const handle = addon.trace(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export interface SoftmaxOptions extends StreamOptions {}
+
+export function softmax(
+  a: MLXArray,
+  axis?: AxisSpec,
+  options?: SoftmaxOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  const nativeAxis = normalizeAxisArg(axis);
+  args.push(nativeAxis ?? null);
+  appendStreamArg(args, options?.stream);
+  const handle = addon.softmax(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+// ---------------------------------------------------------------------------
+// Additional math ops
+// ---------------------------------------------------------------------------
+
+export function logaddexp(
+  a: ScalarOrArray,
+  b: ScalarOrArray,
+  options?: BinaryOpOptions,
+): MLXArray {
+  const args: any[] = [toNativeScalarOrArray(a), toNativeScalarOrArray(b)];
+  appendStreamArg(args, options?.stream);
+  const handle = addon.logaddexp(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export interface ClipOptions extends StreamOptions {}
+
+export function clip(
+  a: MLXArray,
+  aMin?: ScalarOrArray | null,
+  aMax?: ScalarOrArray | null,
+  options?: ClipOptions,
+): MLXArray {
+  const args: any[] = [
+    toNativeHandle(a),
+    aMin != null ? toNativeScalarOrArray(aMin) : null,
+    aMax != null ? toNativeScalarOrArray(aMax) : null,
+  ];
+  appendStreamArg(args, options?.stream);
+  const handle = addon.clip(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export function log1p(a: ScalarOrArray, options?: UnaryOpOptions): MLXArray {
+  const args: any[] = [toNativeScalarOrArray(a)];
+  appendStreamArg(args, options?.stream);
+  const handle = addon.log1p(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export function negative(a: ScalarOrArray, options?: UnaryOpOptions): MLXArray {
+  const args: any[] = [toNativeScalarOrArray(a)];
+  appendStreamArg(args, options?.stream);
+  const handle = addon.negative(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export function reciprocal(a: ScalarOrArray, options?: UnaryOpOptions): MLXArray {
+  const args: any[] = [toNativeScalarOrArray(a)];
+  appendStreamArg(args, options?.stream);
+  const handle = addon.reciprocal(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+// ---------------------------------------------------------------------------
+// Shape manipulation
+// ---------------------------------------------------------------------------
+
+export interface ExpandDimsOptions extends StreamOptions {}
+
+export function expand_dims(
+  a: MLXArray,
+  axis: number | readonly number[],
+  options?: ExpandDimsOptions,
+): MLXArray {
+  const nativeAxis = typeof axis === 'number' ? axis : Array.from(axis);
+  const args: any[] = [toNativeHandle(a), nativeAxis];
+  appendStreamArg(args, options?.stream);
+  const handle = addon.expand_dims(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export interface SqueezeOptions extends StreamOptions {}
+
+export function squeeze(
+  a: MLXArray,
+  axis?: number | readonly number[] | null,
+  options?: SqueezeOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  if (axis != null) {
+    const nativeAxis = typeof axis === 'number' ? axis : Array.from(axis);
+    args.push(nativeAxis);
+  }
+  appendStreamArg(args, options?.stream);
+  const handle = addon.squeeze(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export interface ConcatenateOptions extends StreamOptions {}
+
+export function concatenate(
+  arrays: readonly MLXArray[],
+  axis?: number | null,
+  options?: ConcatenateOptions,
+): MLXArray {
+  const nativeArrays = arrays.map(toNativeHandle);
+  const args: any[] = [nativeArrays];
+  if (axis !== undefined) {
+    args.push(axis);
+  }
+  appendStreamArg(args, options?.stream);
+  const handle = addon.concatenate(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+// ---------------------------------------------------------------------------
+// Stack
+// ---------------------------------------------------------------------------
+
+export interface StackOptions extends StreamOptions {}
+
+/**
+ * Stack arrays along a new axis.
+ *
+ * @param arrays - Arrays to stack (must have the same shape)
+ * @param axis - Axis along which to stack (default 0)
+ * @param options - Optional stream configuration
+ * @returns Stacked array
+ */
+export function stack(
+  arrays: readonly MLXArray[],
+  axis?: number,
+  options?: StackOptions,
+): MLXArray {
+  const nativeArrays = arrays.map(toNativeHandle);
+  const args: any[] = [nativeArrays];
+  if (axis !== undefined) args.push(axis);
+  appendStreamArg(args, options?.stream);
+  const handle = addon.stack(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+// ---------------------------------------------------------------------------
+// Convolution ops
+// ---------------------------------------------------------------------------
+
+export interface Conv1dOptions extends StreamOptions {}
+
+/**
+ * 1-D convolution over an input signal composed of several channels.
+ *
+ * @param input - Input array of shape (N, L, C_in)
+ * @param weight - Weight array of shape (C_out, K, C_in/groups)
+ * @param stride - Stride of the convolution (default 1)
+ * @param padding - Zero-padding added to both sides (default 0)
+ * @param dilation - Spacing between kernel elements (default 1)
+ * @param groups - Number of blocked connections (default 1)
+ * @param options - Optional stream configuration
+ */
+export function conv1d(
+  input: MLXArray,
+  weight: MLXArray,
+  stride?: number,
+  padding?: number,
+  dilation?: number,
+  groups?: number,
+  options?: Conv1dOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(input), toNativeHandle(weight)];
+  if (stride !== undefined) args.push(stride);
+  if (padding !== undefined) args.push(padding);
+  if (dilation !== undefined) args.push(dilation);
+  if (groups !== undefined) args.push(groups);
+  appendStreamArg(args, options?.stream);
+  const handle = addon.conv1d(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export interface Conv2dOptions extends StreamOptions {}
+
+/**
+ * 2-D convolution.
+ *
+ * @param input - Input array of shape (N, H, W, C_in)
+ * @param weight - Weight array of shape (C_out, KH, KW, C_in/groups)
+ * @param stride - Stride (default [1,1])
+ * @param padding - Padding (default [0,0])
+ * @param dilation - Dilation (default [1,1])
+ * @param groups - Number of blocked connections (default 1)
+ * @param options - Optional stream configuration
+ */
+export function conv2d(
+  input: MLXArray,
+  weight: MLXArray,
+  stride?: number | [number, number],
+  padding?: number | [number, number],
+  dilation?: number | [number, number],
+  groups?: number,
+  options?: Conv2dOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(input), toNativeHandle(weight)];
+  if (stride !== undefined) args.push(stride);
+  if (padding !== undefined) args.push(padding);
+  if (dilation !== undefined) args.push(dilation);
+  if (groups !== undefined) args.push(groups);
+  appendStreamArg(args, options?.stream);
+  const handle = addon.conv2d(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export interface Conv3dOptions extends StreamOptions {}
+
+/**
+ * 3-D convolution.
+ *
+ * @param input - Input array of shape (N, D, H, W, C_in)
+ * @param weight - Weight array of shape (C_out, KD, KH, KW, C_in)
+ * @param stride - Stride (default [1,1,1])
+ * @param padding - Padding (default [0,0,0])
+ * @param dilation - Dilation (default [1,1,1])
+ * @param groups - Number of groups (default 1)
+ * @param options - Optional stream configuration
+ */
+export function conv3d(
+  input: MLXArray,
+  weight: MLXArray,
+  stride?: number | [number, number, number],
+  padding?: number | [number, number, number],
+  dilation?: number | [number, number, number],
+  groups?: number,
+  options?: Conv3dOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(input), toNativeHandle(weight)];
+  if (stride !== undefined) args.push(stride);
+  if (padding !== undefined) args.push(padding);
+  if (dilation !== undefined) args.push(dilation);
+  if (groups !== undefined) args.push(groups);
+  appendStreamArg(args, options?.stream);
+  const handle = addon.conv3d(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+// ---------------------------------------------------------------------------
+// Indexing
+// ---------------------------------------------------------------------------
+
+export interface TakeAlongAxisOptions extends StreamOptions {}
+
+export function take_along_axis(
+  a: MLXArray,
+  indices: MLXArray,
+  axis: number | null,
+  options?: TakeAlongAxisOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a), toNativeHandle(indices), axis];
+  appendStreamArg(args, options?.stream);
+  const handle = addon.take_along_axis(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export interface SliceOptions extends StreamOptions {}
+
+/**
+ * Slice (sub-array extraction).
+ *
+ * @param a - Input array
+ * @param start - Start indices for each axis
+ * @param stop - Stop indices for each axis
+ * @param strides - Optional strides for each axis
+ * @param options - Optional stream configuration
+ */
+export interface PadOptions extends StreamOptions {}
+
+/**
+ * Pad an array with a constant value.
+ *
+ * @param a - Input array
+ * @param padWidth - Array of [low, high] pairs, one per axis
+ * @param padValue - Value to use for padding (default: 0)
+ * @param options - Stream options
+ */
+export function pad(
+  a: MLXArray,
+  padWidth: readonly (readonly [number, number])[],
+  padValue?: number | MLXArray,
+  options?: PadOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a), padWidth.map(p => [...p])];
+  if (padValue !== undefined) {
+    if (padValue instanceof MLXArray) {
+      args.push(toNativeHandle(padValue));
+    } else {
+      args.push(padValue);
+    }
+  }
+  appendStreamArg(args, options?.stream);
+  const handle = addon.pad(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export function slice(
+  a: MLXArray,
+  start: readonly number[],
+  stop: readonly number[],
+  strides?: readonly number[],
+  options?: SliceOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a), [...start], [...stop]];
+  if (strides !== undefined) args.push([...strides]);
+  appendStreamArg(args, options?.stream);
+  const handle = addon.slice(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export interface AsStridedOptions extends StreamOptions {}
+
+/**
+ * Create a view of the array with the given shape, strides, and offset.
+ *
+ * @param a - Input array
+ * @param shape - Output shape
+ * @param strides - Strides in elements
+ * @param offset - Offset in elements from start of data
+ * @param options - Optional stream configuration
+ */
+export function as_strided(
+  a: MLXArray,
+  shape: readonly number[],
+  strides: readonly number[],
+  offset: number,
+  options?: AsStridedOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a), [...shape], [...strides], offset];
+  appendStreamArg(args, options?.stream);
+  const handle = addon.as_strided(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export interface NumberOfElementsOptions extends StreamOptions {}
+
+/**
+ * Returns the number of elements along the given axes as a scalar array.
+ *
+ * @param a - Input array
+ * @param axes - Axes to count
+ * @param inverted - If true, count elements NOT along these axes
+ * @param options - Optional stream configuration
+ */
+export function number_of_elements(
+  a: MLXArray,
+  axes: readonly number[],
+  inverted: boolean = false,
+  options?: NumberOfElementsOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a), [...axes], inverted];
+  appendStreamArg(args, options?.stream);
+  const handle = addon.number_of_elements(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+// ---------------------------------------------------------------------------
+// Fast namespace
+// ---------------------------------------------------------------------------
+
+export const fast = {
+  /**
+   * Scaled dot product attention.
+   *
+   * @param queries - Query array of shape (..., L, D)
+   * @param keys - Key array of shape (..., S, D)
+   * @param values - Value array of shape (..., S, Dv)
+   * @param scale - Scale factor (typically 1/sqrt(D))
+   * @param mask - Optional additive attention mask
+   */
+  scaled_dot_product_attention(
+    queries: MLXArray,
+    keys: MLXArray,
+    values: MLXArray,
+    scale: number,
+    mask?: MLXArray,
+  ): MLXArray {
+    const args: any[] = [
+      toNativeHandle(queries),
+      toNativeHandle(keys),
+      toNativeHandle(values),
+      scale,
+    ];
+    if (mask !== undefined) args.push(toNativeHandle(mask));
+    const handle = addon.fast.scaled_dot_product_attention(...args);
+    return MLXArray.fromHandle(handle);
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Activation primitives
+// ---------------------------------------------------------------------------
+
+export function sigmoid(a: ScalarOrArray, options?: UnaryOpOptions): MLXArray {
+  const args: any[] = [toNativeScalarOrArray(a)];
+  appendStreamArg(args, options?.stream);
+  const handle = addon.sigmoid(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export function erf(a: ScalarOrArray, options?: UnaryOpOptions): MLXArray {
+  const args: any[] = [toNativeScalarOrArray(a)];
+  appendStreamArg(args, options?.stream);
+  const handle = addon.erf(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export function tanh(a: ScalarOrArray, options?: UnaryOpOptions): MLXArray {
+  const args: any[] = [toNativeScalarOrArray(a)];
+  appendStreamArg(args, options?.stream);
+  const handle = addon.tanh(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+export interface SplitOptions extends StreamOptions {}
+
+export function split(
+  a: MLXArray,
+  indicesOrSections: number | readonly number[],
+  axis?: number,
+  options?: SplitOptions,
+): MLXArray[] {
+  const nativeSplit = typeof indicesOrSections === 'number'
+    ? indicesOrSections
+    : Array.from(indicesOrSections);
+  const args: any[] = [toNativeHandle(a), nativeSplit];
+  if (axis !== undefined) {
+    args.push(axis);
+  }
+  appendStreamArg(args, options?.stream);
+  const handles: any[] = addon.split(...args);
+  return handles.map((h: any) => MLXArray.fromHandle(h));
+}
+
+// ---------------------------------------------------------------------------
+// take(a, indices, axis?, stream?) — gather elements by index
+// ---------------------------------------------------------------------------
+
+export interface TakeOptions extends StreamOptions {}
+
+/**
+ * Take elements from an array along an axis.
+ *
+ * @param a - Input array
+ * @param indices - Integer indices to gather
+ * @param axis - Optional axis along which to take. If omitted, array is flattened first.
+ * @param options - Optional stream configuration
+ * @returns Gathered elements
+ */
+export function take(
+  a: MLXArray,
+  indices: MLXArray,
+  axis?: number,
+  options?: TakeOptions,
+): MLXArray {
+  const args: any[] = [toNativeHandle(a), toNativeHandle(indices)];
+  if (axis !== undefined) args.push(axis);
+  appendStreamArg(args, options?.stream);
+  const handle = addon.take(...args);
+  return MLXArray.fromHandle(handle);
+}
+
+// ---------------------------------------------------------------------------
+// Linear algebra (mlx.core.linalg)
+// ---------------------------------------------------------------------------
+
+export namespace linalg {
+  export interface NormOptions extends StreamOptions {
+    keepdims?: boolean;
+  }
+
+  /**
+   * Compute vector or matrix norms.
+   *
+   * @param a - Input array.
+   * @param ord - Order of the norm (number, 'fro', or 'nuc'). Default: 2-norm / Frobenius.
+   * @param axis - Axis or axes along which to compute. Default: all.
+   * @param options.keepdims - Keep normed axes as size-1 dims. Default: false.
+   * @param options.stream - Stream to use.
+   * @returns The norm(s).
+   */
+  export function norm(
+    a: MLXArray,
+    ord?: number | string | null,
+    axis?: number | readonly number[] | null,
+    options?: NormOptions,
+  ): MLXArray {
+    const nativeOrd = (ord === undefined || ord === null) ? null : ord;
+
+    let nativeAxis: number | number[] | null = null;
+    if (axis !== undefined && axis !== null) {
+      if (typeof axis === 'number') {
+        nativeAxis = axis;
+      } else {
+        nativeAxis = [...axis];
+      }
+    }
+
+    const keepdims = options?.keepdims ?? false;
+
+    const args: any[] = [
+      toNativeHandle(a),
+      nativeOrd,
+      nativeAxis,
+      keepdims,
+    ];
+    appendStreamArg(args, options?.stream);
+    const handle = addon.linalg.norm(...args);
+    return MLXArray.fromHandle(handle);
+  }
 }
