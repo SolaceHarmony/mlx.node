@@ -62,7 +62,9 @@
       'vendor/mlx/backend/metal/fft.cpp',
       'vendor/mlx/backend/metal/hadamard.cpp',
       'vendor/mlx/backend/metal/indexing.cpp',
-      'vendor/mlx/backend/metal/jit_kernels.cpp',
+      # Use nojit_kernels.cpp instead of jit_kernels.cpp — we ship a pre-compiled
+      # metallib with all kernels including float64 double-double arithmetic.
+      # JIT compilation would fail for float64 since Metal has no native double.
       'vendor/mlx/backend/metal/logsumexp.cpp',
       'vendor/mlx/backend/metal/matmul.cpp',
       'vendor/mlx/backend/metal/metal.cpp',

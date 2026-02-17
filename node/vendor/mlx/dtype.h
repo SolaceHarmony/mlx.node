@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include "mlx/types/complex.h"
+#include "mlx/types/float64.h"
 #include "mlx/types/half_types.h"
 
 namespace mlx::core {
@@ -79,7 +80,7 @@ inline constexpr Dtype int64{Dtype::Val::int64, sizeof(int64_t)};
 
 inline constexpr Dtype float16{Dtype::Val::float16, sizeof(uint16_t)};
 inline constexpr Dtype float32{Dtype::Val::float32, sizeof(float)};
-inline constexpr Dtype float64{Dtype::Val::float64, sizeof(double)};
+inline constexpr Dtype float64{Dtype::Val::float64, sizeof(float64_t)};
 inline constexpr Dtype bfloat16{Dtype::Val::bfloat16, sizeof(uint16_t)};
 inline constexpr Dtype complex64{Dtype::Val::complex64, sizeof(complex64_t)};
 

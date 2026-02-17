@@ -109,6 +109,9 @@ inline std::ostream& operator<<(std::ostream& os, const float16_t& v) {
 inline std::ostream& operator<<(std::ostream& os, const bfloat16_t& v) {
   return os << static_cast<float>(v);
 }
+inline std::ostream& operator<<(std::ostream& os, const float64_t& v) {
+  return os << static_cast<double>(v);
+}
 
 template <typename Vec, typename = std::enable_if_t<is_vector_v<Vec>>>
 inline std::ostream& operator<<(std::ostream& os, const Vec& v) {

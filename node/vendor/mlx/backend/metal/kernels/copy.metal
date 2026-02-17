@@ -72,4 +72,8 @@ instantiate_copy_itype(int64, int64_t)
 instantiate_copy_itype(float16, half)
 instantiate_copy_itype(float32, float)
 instantiate_copy_itype(bfloat16, bfloat16_t)
-instantiate_copy_itype(complex64, complex64_t) // clang-format on
+instantiate_copy_itype(complex64, complex64_t)
+
+// Float64 uses double-double representation {hi, lo} - same binary layout as complex64
+#include "mlx/backend/metal/kernels/float64.h"
+instantiate_copy_same(float64float64, float64_t) // clang-format on

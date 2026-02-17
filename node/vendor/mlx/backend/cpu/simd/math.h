@@ -28,6 +28,15 @@ template <typename T, int N>
 Simd<T, N> exp(Simd<T, N> in) {
   if constexpr (is_complex<T>) {
     return Simd<T, 1>{std::exp(in.value)};
+  } else if constexpr (std::is_same_v<T, double>) {
+    if constexpr (N == 1) {
+      return Simd<double, 1>{std::exp(in.value)};
+    } else {
+      alignas(alignof(Simd<double, N>)) double tmp[N];
+      store(tmp, in);
+      for (int i = 0; i < N; ++i) tmp[i] = std::exp(tmp[i]);
+      return load<double, N>(tmp);
+    }
   } else {
     Simd<float, N> x_init = in;
     auto x = x_init * 1.442695f; // multiply with log_2(e)

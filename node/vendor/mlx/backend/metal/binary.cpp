@@ -58,7 +58,13 @@ std::string get_kernel_name(
       kname += "n";
     }
   }
-  concatenate(kname, "_", op, type_to_name(a));
+  // For float64, use specialized double-double arithmetic kernels
+  std::string op_name = op;
+  if (a.dtype() == float64) {
+    op_name += "Float64";
+  }
+
+  concatenate(kname, "_", op_name, type_to_name(a));
   return kname;
 }
 
