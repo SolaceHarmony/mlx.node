@@ -95,6 +95,7 @@ import {
   greater_equal,
   maximum,
   minimum,
+  import_function,
   type ReshapeOptions,
   type TransposeOptions,
   type MoveAxisOptions,
@@ -176,6 +177,7 @@ export {
   sqrt,
   exp,
   log,
+  import_function,
 };
 export {
   dtypeModule as dtype,
@@ -266,6 +268,7 @@ const core = {
   sqrt,
   exp,
   log,
+  import_function,
   device: deviceModule,
   Dtype,
   dtype: dtypeModule,

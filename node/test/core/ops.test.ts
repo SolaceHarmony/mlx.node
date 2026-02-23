@@ -639,3 +639,22 @@ describe('random ops', () => {
     assert.ok(!allSame, 'Random values should differ between calls');
   });
 });
+
+describe('import_function', () => {
+  it('should be available as a function', () => {
+    const { import_function } = require('../../src');
+    assert.strictEqual(typeof import_function, 'function');
+  });
+  
+  it('should throw error for non-string argument', () => {
+    const { import_function } = require('../../src');
+    assert.throws(() => {
+      import_function(123 as any);
+    }, /TypeError|expects a string/);
+  });
+  
+  // Note: Actual functional tests would require:
+  // 1. An exported .mlxfn file to import
+  // 2. Running on macOS with Metal support
+  // This test ensures the API exists and has the correct signature
+});

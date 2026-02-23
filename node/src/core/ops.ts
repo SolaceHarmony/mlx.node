@@ -614,3 +614,70 @@ export namespace random {
     return MLXArray.fromHandle(handle);
   }
 }
+
+/**
+ * Import a function from a .mlxfn file.
+ * 
+ * Returns a callable function that can be invoked with MLX arrays.
+ * The imported function accepts:
+ * - Positional array arguments: fn(a, b, c)
+ * - A single array of arrays: fn([a, b, c])
+ * - A single object/dict of arrays: fn({x: a, y: b})
+ * - Combined: fn([a, b], {x: c, y: d})
+ * 
+ * The returned function always returns an array of output MLX arrays.
+ * 
+ * @param file - Path to the .mlxfn file
+ * @returns A callable function wrapping the imported MLX function
+ * 
+ * @example
+ * ```typescript
+ * import { import_function, array } from 'mlx';
+ * 
+ * // Import a previously exported function
+ * const fn = import_function('function.mlxfn');
+ * 
+ * // Call with positional arguments
+ * const input = array([1, 2, 3]);
+ * const [output] = fn(input);
+ * 
+ * // Call with named arguments
+ * const [result] = fn({ x: input });
+ * ```
+ */
+export function import_function(file: string): (...args: any[]) => MLXArray[] {
+  if (typeof file !== 'string') {
+    throw new TypeError('import_function expects a string file path');
+  }
+  
+  const nativeFunction = addon.import_function(file);
+  
+  return (...args: any[]): MLXArray[] => {
+    // Convert MLXArray inputs to native handles
+    const nativeArgs = args.map(arg => {
+      if (arg instanceof MLXArray) {
+        return arg.toNative();
+      } else if (Array.isArray(arg)) {
+        return arg.map(item => item instanceof MLXArray ? item.toNative() : item);
+      } else if (arg && typeof arg === 'object') {
+        const converted: Record<string, any> = {};
+        for (const [key, value] of Object.entries(arg)) {
+          converted[key] = value instanceof MLXArray ? value.toNative() : value;
+        }
+        return converted;
+      }
+      return arg;
+    });
+    
+    // Call the native function
+    const resultHandles = nativeFunction(...nativeArgs);
+    
+    // Convert result handles back to MLXArray objects
+    if (Array.isArray(resultHandles)) {
+      return resultHandles.map(handle => MLXArray.fromHandle(handle));
+    }
+    
+    // If single result, wrap in array
+    return [MLXArray.fromHandle(resultHandles)];
+  };
+}

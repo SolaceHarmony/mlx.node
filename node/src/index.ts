@@ -69,6 +69,7 @@ export const {
   sqrt,
   exp,
   log,
+  import_function,
   // DType constants
   bool,
   int8,
