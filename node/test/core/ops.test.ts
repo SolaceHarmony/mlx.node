@@ -646,24 +646,38 @@ describe('import_function', () => {
     assert.strictEqual(typeof import_function, 'function');
   });
   
-  it('should throw error for non-string argument', () => {
+  it('should throw TypeError for non-string argument', () => {
     const { import_function } = require('../../src');
-    assert.throws(() => {
-      import_function(123 as any);
-    }, /TypeError|expects a string/);
+    assert.throws(
+      () => {
+        import_function(123 as any);
+      },
+      (err: Error) => {
+        assert.strictEqual(err.name, 'TypeError');
+        assert.match(err.message, /expects a string/i);
+        return true;
+      }
+    );
   });
   
   it('should throw error for non-existent file', () => {
     const { import_function } = require('../../src');
     // Attempt to import from a non-existent file
     // The error message should include context about the file
-    assert.throws(() => {
-      import_function('/nonexistent/path/function.mlxfn');
-    }, /import_function failed|No such file|cannot open/i);
+    assert.throws(
+      () => {
+        import_function('/nonexistent/path/function.mlxfn');
+      },
+      (err: Error) => {
+        assert.strictEqual(err.name, 'Error');
+        assert.match(err.message, /import_function failed|No such file|cannot open/i);
+        return true;
+      }
+    );
   });
   
   // Note: Actual functional tests would require:
   // 1. An exported .mlxfn file to import
   // 2. Running on macOS with Metal support
-  // This test ensures the API exists and has the correct signature
+  // These tests ensure the API exists and has the correct signature
 });
