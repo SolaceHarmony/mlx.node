@@ -653,6 +653,15 @@ describe('import_function', () => {
     }, /TypeError|expects a string/);
   });
   
+  it('should throw error for non-existent file', () => {
+    const { import_function } = require('../../src');
+    // Attempt to import from a non-existent file
+    // The error message should include context about the file
+    assert.throws(() => {
+      import_function('/nonexistent/path/function.mlxfn');
+    }, /import_function failed|No such file|cannot open/i);
+  });
+  
   // Note: Actual functional tests would require:
   // 1. An exported .mlxfn file to import
   // 2. Running on macOS with Metal support

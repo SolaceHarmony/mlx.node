@@ -673,11 +673,11 @@ export function import_function(file: string): (...args: any[]) => MLXArray[] {
     const resultHandles = nativeFunction(...nativeArgs);
     
     // Convert result handles back to MLXArray objects
-    if (Array.isArray(resultHandles)) {
-      return resultHandles.map(handle => MLXArray.fromHandle(handle));
+    // The C++ implementation always returns an array of results
+    if (!Array.isArray(resultHandles)) {
+      throw new Error('Internal error: import_function expected array result from native function');
     }
     
-    // If single result, wrap in array
-    return [MLXArray.fromHandle(resultHandles)];
+    return resultHandles.map(handle => MLXArray.fromHandle(handle));
   };
 }
