@@ -15,6 +15,7 @@
 #include "mlx/backend/metal/device.h"
 #include "mlx/backend/metal/metal.h"
 #include "mlx/dtype_utils.h"
+#include "mlx/export.h"
 #include "mlx/mlx.h"
 #include "mlx/ops.h"
 #include "mlx/random.h"
@@ -3165,6 +3166,205 @@ Napi::Value Sparse(const Napi::CallbackInfo& info) {
   }
 }
 
+/**
+ * Import a function from a .mlxfn file.
+ * 
+ * Returns a callable JavaScript function that can be invoked with:
+ * - Positional array arguments: fn(a, b, c)
+ * - A single array/list of arrays: fn([a, b, c])
+ * - A single object/dict of arrays: fn({x: a, y: b})
+ * - Combined: fn([a, b], {x: c, y: d})
+ * 
+ * The returned function always returns a tuple (array) of output arrays.
+ * 
+ * Args:
+ *   - file (string): Path to the .mlxfn file
+ * 
+ * Returns: A JavaScript function wrapping the imported MLX function
+ */
+Napi::Value ImportFunction(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+  
+  try {
+    mlx::node::Runtime::Instance().EnsureMetalInit();
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  
+  // Parse file path argument
+  if (info.Length() < 1 || !info[0].IsString()) {
+    Napi::TypeError::New(env, "import_function expects a string file path")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  
+  std::string file_path = info[0].As<Napi::String>().Utf8Value();
+  
+  try {
+    // Import the function from file
+    auto imported_fn = mlx::core::import_function(file_path);
+    
+    // Create a shared pointer to keep the imported function alive
+    auto fn_ptr = std::make_shared<mlx::core::ImportedFunction>(std::move(imported_fn));
+    
+    // Create a JavaScript function that captures the imported function
+    auto js_function = Napi::Function::New(
+        env,
+        [fn_ptr, addon](const Napi::CallbackInfo& call_info) -> Napi::Value {
+          auto call_env = call_info.Env();
+          
+          try {
+            mlx::core::Args args;
+            mlx::core::Kwargs kwargs;
+            
+            // Parse arguments based on how they're provided
+            if (call_info.Length() == 0) {
+              // No arguments
+            } else if (call_info.Length() == 1) {
+              // Check if it's an array, object, or single MLX array
+              if (call_info[0].IsArray()) {
+                // Single array argument containing MLX arrays
+                auto arr = call_info[0].As<Napi::Array>();
+                for (uint32_t i = 0; i < arr.Length(); i++) {
+                  auto elem = arr.Get(i);
+                  if (elem.IsObject()) {
+                    auto obj = elem.As<Napi::Object>();
+                    auto ctor = addon->array_constructor.Value();
+                    if (!ctor.IsEmpty() && obj.InstanceOf(ctor)) {
+                      const auto* wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(obj);
+                      if (wrapper) {
+                        args.push_back(wrapper->tensor());
+                      }
+                    }
+                  }
+                }
+              } else if (call_info[0].IsObject()) {
+                auto obj = call_info[0].As<Napi::Object>();
+                auto ctor = addon->array_constructor.Value();
+                
+                // Check if it's an MLX array
+                if (!ctor.IsEmpty() && obj.InstanceOf(ctor)) {
+                  const auto* wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(obj);
+                  if (wrapper) {
+                    args.push_back(wrapper->tensor());
+                  }
+                } else {
+                  // It's a dictionary/object of arrays
+                  auto prop_names = obj.GetPropertyNames();
+                  for (uint32_t i = 0; i < prop_names.Length(); i++) {
+                    auto key = prop_names.Get(i);
+                    if (key.IsString()) {
+                      auto key_str = key.As<Napi::String>().Utf8Value();
+                      auto val = obj.Get(key);
+                      if (val.IsObject()) {
+                        auto val_obj = val.As<Napi::Object>();
+                        if (!ctor.IsEmpty() && val_obj.InstanceOf(ctor)) {
+                          const auto* wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(val_obj);
+                          if (wrapper) {
+                            kwargs[key_str] = wrapper->tensor();
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            } else if (call_info.Length() == 2) {
+              // Two arguments: args and kwargs
+              // First argument should be an array
+              if (call_info[0].IsArray()) {
+                auto arr = call_info[0].As<Napi::Array>();
+                for (uint32_t i = 0; i < arr.Length(); i++) {
+                  auto elem = arr.Get(i);
+                  if (elem.IsObject()) {
+                    auto obj = elem.As<Napi::Object>();
+                    auto ctor = addon->array_constructor.Value();
+                    if (!ctor.IsEmpty() && obj.InstanceOf(ctor)) {
+                      const auto* wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(obj);
+                      if (wrapper) {
+                        args.push_back(wrapper->tensor());
+                      }
+                    }
+                  }
+                }
+              }
+              
+              // Second argument should be an object (kwargs)
+              if (call_info[1].IsObject()) {
+                auto obj = call_info[1].As<Napi::Object>();
+                auto ctor = addon->array_constructor.Value();
+                auto prop_names = obj.GetPropertyNames();
+                for (uint32_t i = 0; i < prop_names.Length(); i++) {
+                  auto key = prop_names.Get(i);
+                  if (key.IsString()) {
+                    auto key_str = key.As<Napi::String>().Utf8Value();
+                    auto val = obj.Get(key);
+                    if (val.IsObject()) {
+                      auto val_obj = val.As<Napi::Object>();
+                      if (!ctor.IsEmpty() && val_obj.InstanceOf(ctor)) {
+                        const auto* wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(val_obj);
+                        if (wrapper) {
+                          kwargs[key_str] = wrapper->tensor();
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            } else {
+              // Multiple positional arguments (all should be MLX arrays)
+              auto ctor = addon->array_constructor.Value();
+              for (size_t i = 0; i < call_info.Length(); i++) {
+                if (call_info[i].IsObject()) {
+                  auto obj = call_info[i].As<Napi::Object>();
+                  if (!ctor.IsEmpty() && obj.InstanceOf(ctor)) {
+                    const auto* wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(obj);
+                    if (wrapper) {
+                      args.push_back(wrapper->tensor());
+                    }
+                  }
+                }
+              }
+            }
+            
+            // Call the imported function
+            std::vector<mlx::core::array> results;
+            if (!args.empty() && !kwargs.empty()) {
+              results = (*fn_ptr)(args, kwargs);
+            } else if (!kwargs.empty()) {
+              results = (*fn_ptr)(kwargs);
+            } else {
+              results = (*fn_ptr)(args);
+            }
+            
+            // Return results as an array (tuple)
+            auto result_array = Napi::Array::New(call_env, results.size());
+            for (size_t i = 0; i < results.size(); i++) {
+              result_array.Set(
+                  i,
+                  WrapArray(call_env, std::make_shared<mlx::core::array>(std::move(results[i]))));
+            }
+            return result_array;
+            
+          } catch (const std::exception& e) {
+            Napi::Error::New(call_env, std::string("Imported function call failed: ") + e.what())
+                .ThrowAsJavaScriptException();
+            return call_env.Null();
+          }
+        },
+        "imported_function");
+    
+    return js_function;
+    
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, std::string("import_function failed: ") + e.what())
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+}
+
 } // namespace
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -3230,6 +3430,9 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   core.Set("greater_equal", Napi::Function::New(env, GreaterEqual, "greater_equal", &data));
   core.Set("maximum", Napi::Function::New(env, Maximum, "maximum", &data));
   core.Set("minimum", Napi::Function::New(env, Minimum, "minimum", &data));
+  
+  // Export/Import functions
+  core.Set("import_function", Napi::Function::New(env, ImportFunction, "import_function", &data));
 
   // NN init functions
   Napi::Object nn_init = Napi::Object::New(env);
