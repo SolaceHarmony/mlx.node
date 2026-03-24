@@ -684,6 +684,127 @@ export namespace random {
     const handle = addon.random.uniform(...args);
     return MLXArray.fromHandle(handle);
   }
+
+  export function seed(s: number): void {
+    addon.random.seed(s);
+  }
+
+  export function key(s: number): MLXArray {
+    return MLXArray.fromHandle(addon.random.key(s));
+  }
+
+  export interface SplitOptions extends StreamOptions {}
+
+  export function split(k: MLXArray, num?: number, options?: SplitOptions): MLXArray | [MLXArray, MLXArray] {
+    const args: any[] = [toNativeHandle(k)];
+    if (num !== undefined) args.push(num);
+    appendStreamArg(args, options?.stream);
+    const result = addon.random.split(...args);
+    if (Array.isArray(result)) {
+      return [MLXArray.fromHandle(result[0]), MLXArray.fromHandle(result[1])];
+    }
+    return MLXArray.fromHandle(result);
+  }
+
+  export interface RandintOptions extends StreamOptions {
+    dtype?: DTypeLike;
+    key?: MLXArray;
+  }
+
+  export function randint(low: number | MLXArray, high: number | MLXArray, shape: readonly number[], options?: RandintOptions): MLXArray {
+    const args: any[] = [
+      low instanceof MLXArray ? toNativeHandle(low) : low,
+      high instanceof MLXArray ? toNativeHandle(high) : high,
+      normalizeShapeInput(shape),
+    ];
+    if (options?.dtype !== undefined) args.push(options.dtype);
+    if (options?.key !== undefined) args.push(toNativeHandle(options.key));
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.random.randint(...args));
+  }
+
+  export interface CategoricalOptions extends StreamOptions {
+    axis?: number;
+    key?: MLXArray;
+  }
+
+  export function categorical(logits: MLXArray, options?: CategoricalOptions): MLXArray {
+    const args: any[] = [toNativeHandle(logits)];
+    if (options?.axis !== undefined) args.push(options.axis);
+    if (options?.key !== undefined) args.push(toNativeHandle(options.key));
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.random.categorical(...args));
+  }
+
+  export interface PermutationOptions extends StreamOptions {
+    axis?: number;
+    key?: MLXArray;
+  }
+
+  export function permutation(x: number | MLXArray, options?: PermutationOptions): MLXArray {
+    const args: any[] = [x instanceof MLXArray ? toNativeHandle(x) : x];
+    if (x instanceof MLXArray && options?.axis !== undefined) args.push(options.axis);
+    if (options?.key !== undefined) args.push(toNativeHandle(options.key));
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.random.permutation(...args));
+  }
+
+  export interface GumbelOptions extends StreamOptions {
+    dtype?: DTypeLike;
+    key?: MLXArray;
+  }
+
+  export function gumbel(shape: readonly number[], options?: GumbelOptions): MLXArray {
+    const args: any[] = [normalizeShapeInput(shape)];
+    if (options?.dtype !== undefined) args.push(options.dtype);
+    if (options?.key !== undefined) args.push(toNativeHandle(options.key));
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.random.gumbel(...args));
+  }
+
+  export interface LaplaceOptions extends StreamOptions {
+    dtype?: DTypeLike;
+    key?: MLXArray;
+  }
+
+  export function laplace(shape: readonly number[], options?: LaplaceOptions): MLXArray {
+    const args: any[] = [normalizeShapeInput(shape)];
+    if (options?.dtype !== undefined) args.push(options.dtype);
+    if (options?.key !== undefined) args.push(toNativeHandle(options.key));
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.random.laplace(...args));
+  }
+
+  export interface TruncatedNormalOptions extends StreamOptions {
+    shape?: readonly number[];
+    dtype?: DTypeLike;
+    key?: MLXArray;
+  }
+
+  export function truncated_normal(lower: number | MLXArray, upper: number | MLXArray, options?: TruncatedNormalOptions): MLXArray {
+    const args: any[] = [
+      lower instanceof MLXArray ? toNativeHandle(lower) : lower,
+      upper instanceof MLXArray ? toNativeHandle(upper) : upper,
+    ];
+    if (options?.shape !== undefined) args.push(normalizeShapeInput(options.shape));
+    if (options?.dtype !== undefined) args.push(options.dtype);
+    if (options?.key !== undefined) args.push(toNativeHandle(options.key));
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.random.truncated_normal(...args));
+  }
+
+  export interface MultivariateNormalOptions extends StreamOptions {
+    dtype?: DTypeLike;
+    key?: MLXArray;
+  }
+
+  export function multivariate_normal(mean: MLXArray, cov: MLXArray, shape: readonly number[], options?: MultivariateNormalOptions): MLXArray {
+    const args: any[] = [toNativeHandle(mean), toNativeHandle(cov), normalizeShapeInput(shape)];
+    if (options?.dtype !== undefined) args.push(options.dtype);
+    if (options?.key !== undefined) args.push(toNativeHandle(options.key));
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.random.multivariate_normal(...args));
+  }
 }
 
 /**
@@ -1467,6 +1588,25 @@ export const fast = {
     const handle = addon.fast.scaled_dot_product_attention(...args);
     return MLXArray.fromHandle(handle);
   },
+
+  rms_norm(x: MLXArray, weight: MLXArray | null, eps: number, options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(x), weight ? toNativeHandle(weight) : null, eps];
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.fast.rms_norm(...args));
+  },
+
+  layer_norm(x: MLXArray, weight: MLXArray | null, bias: MLXArray | null, eps: number, options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(x), weight ? toNativeHandle(weight) : null, bias ? toNativeHandle(bias) : null, eps];
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.fast.layer_norm(...args));
+  },
+
+  rope(x: MLXArray, dims: number, traditional: boolean, base: number | null, scale: number, offset: number, freqs?: MLXArray, options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(x), dims, traditional, base, scale, offset];
+    if (freqs !== undefined) args.push(toNativeHandle(freqs));
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.fast.rope(...args));
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -1984,3 +2124,180 @@ export function topk(a: MLXArray, k: number, options?: TopKOptions): MLXArray {
   appendStreamArg(args, options?.stream);
   return MLXArray.fromHandle(addon.topk(...args));
 }
+
+// ---------------------------------------------------------------------------
+// Device management
+// ---------------------------------------------------------------------------
+
+export interface DeviceInfo {
+  type: 'cpu' | 'gpu';
+  index: number;
+}
+
+export function default_device(): DeviceInfo {
+  return addon.default_device();
+}
+
+export function set_default_device(device: string | DeviceInfo): void {
+  addon.set_default_device(device);
+}
+
+export function is_available(device: string | DeviceInfo): boolean {
+  return addon.is_available(device);
+}
+
+// ---------------------------------------------------------------------------
+// Memory management
+// ---------------------------------------------------------------------------
+
+export function clear_cache(): void {
+  addon.clear_cache();
+}
+
+export function get_active_memory(): number {
+  return addon.get_active_memory();
+}
+
+export function get_cache_memory(): number {
+  return addon.get_cache_memory();
+}
+
+export function get_peak_memory(): number {
+  return addon.get_peak_memory();
+}
+
+export function reset_peak_memory(): void {
+  addon.reset_peak_memory();
+}
+
+export function set_cache_limit(limit: number): number {
+  return addon.set_cache_limit(limit);
+}
+
+export function set_memory_limit(limit: number): number {
+  return addon.set_memory_limit(limit);
+}
+
+export function set_wired_limit(limit: number): number {
+  return addon.set_wired_limit(limit);
+}
+
+// ---------------------------------------------------------------------------
+// FFT namespace
+// ---------------------------------------------------------------------------
+
+export namespace fft_ns {
+  export function fft(a: MLXArray, n?: number, axis?: number, options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (n !== undefined) args.push(n);
+    if (axis !== undefined) args.push(axis);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.fft.fft(...args));
+  }
+
+  export function ifft(a: MLXArray, n?: number, axis?: number, options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (n !== undefined) args.push(n);
+    if (axis !== undefined) args.push(axis);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.fft.ifft(...args));
+  }
+
+  export function fft2(a: MLXArray, n?: readonly number[], axes?: readonly number[], options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (n !== undefined) args.push([...n]);
+    if (axes !== undefined) args.push([...axes]);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.fft.fft2(...args));
+  }
+
+  export function ifft2(a: MLXArray, n?: readonly number[], axes?: readonly number[], options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (n !== undefined) args.push([...n]);
+    if (axes !== undefined) args.push([...axes]);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.fft.ifft2(...args));
+  }
+
+  export function fftn(a: MLXArray, n?: readonly number[], axes?: readonly number[], options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (n !== undefined) args.push([...n]);
+    if (axes !== undefined) args.push([...axes]);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.fft.fftn(...args));
+  }
+
+  export function ifftn(a: MLXArray, n?: readonly number[], axes?: readonly number[], options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (n !== undefined) args.push([...n]);
+    if (axes !== undefined) args.push([...axes]);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.fft.ifftn(...args));
+  }
+
+  export function rfft(a: MLXArray, n?: number, axis?: number, options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (n !== undefined) args.push(n);
+    if (axis !== undefined) args.push(axis);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.fft.rfft(...args));
+  }
+
+  export function irfft(a: MLXArray, n?: number, axis?: number, options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (n !== undefined) args.push(n);
+    if (axis !== undefined) args.push(axis);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.fft.irfft(...args));
+  }
+
+  export function rfft2(a: MLXArray, n?: readonly number[], axes?: readonly number[], options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (n !== undefined) args.push([...n]);
+    if (axes !== undefined) args.push([...axes]);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.fft.rfft2(...args));
+  }
+
+  export function irfft2(a: MLXArray, n?: readonly number[], axes?: readonly number[], options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (n !== undefined) args.push([...n]);
+    if (axes !== undefined) args.push([...axes]);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.fft.irfft2(...args));
+  }
+
+  export function rfftn(a: MLXArray, n?: readonly number[], axes?: readonly number[], options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (n !== undefined) args.push([...n]);
+    if (axes !== undefined) args.push([...axes]);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.fft.rfftn(...args));
+  }
+
+  export function irfftn(a: MLXArray, n?: readonly number[], axes?: readonly number[], options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (n !== undefined) args.push([...n]);
+    if (axes !== undefined) args.push([...axes]);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.fft.irfftn(...args));
+  }
+
+  export function fftshift(a: MLXArray, axes?: readonly number[], options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (axes !== undefined) args.push([...axes]);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.fft.fftshift(...args));
+  }
+
+  export function ifftshift(a: MLXArray, axes?: readonly number[], options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (axes !== undefined) args.push([...axes]);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.fft.ifftshift(...args));
+  }
+}
+
+// Re-export fft namespace as "fft" for use in index
+export { fft_ns as fft };
+

@@ -21,6 +21,9 @@
 #include "mlx/linalg.h"
 #include "mlx/random.h"
 #include "mlx/fast.h"
+#include "mlx/fft.h"
+#include "mlx/memory.h"
+#include "mlx/device.h"
 #include "mlx_bridge.h"
 
 #include "dtype.h"
@@ -5575,6 +5578,993 @@ Napi::Value TopK(const Napi::CallbackInfo& info) {
           mlx::core::topk(a, k, axis, streamArg)));
 }
 
+// ===========================================================================
+// Random ops
+// ===========================================================================
+
+// random.seed(seed)
+Napi::Value RandomSeed(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1 || !info[0].IsNumber()) {
+    Napi::TypeError::New(env, "random.seed expects a number")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  uint64_t seed = static_cast<uint64_t>(info[0].As<Napi::Number>().Int64Value());
+  mlx::core::random::seed(seed);
+  return env.Undefined();
+}
+
+// random.key(seed)
+Napi::Value RandomKey(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1 || !info[0].IsNumber()) {
+    Napi::TypeError::New(env, "random.key expects a number")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  uint64_t seed = static_cast<uint64_t>(info[0].As<Napi::Number>().Int64Value());
+  return WrapArray(env,
+      std::make_shared<mlx::core::array>(mlx::core::random::key(seed)));
+}
+
+// random.split(key, num?, stream?)
+Napi::Value RandomSplit(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "random.split expects a key array")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto key = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  size_t nextIdx = 1;
+  if (info.Length() > nextIdx && info[nextIdx].IsNumber()) {
+    int num = info[nextIdx].As<Napi::Number>().Int32Value();
+    nextIdx++;
+    auto streamArg = GetStreamArgument(info, nextIdx);
+    if (env.IsExceptionPending()) return env.Null();
+    return WrapArray(env,
+        std::make_shared<mlx::core::array>(
+            mlx::core::random::split(key, num, streamArg)));
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  auto [k1, k2] = mlx::core::random::split(key, streamArg);
+  auto result = Napi::Array::New(env, 2);
+  result.Set(uint32_t(0), WrapArray(env, std::make_shared<mlx::core::array>(k1)));
+  result.Set(uint32_t(1), WrapArray(env, std::make_shared<mlx::core::array>(k2)));
+  return result;
+}
+
+// random.randint(low, high, shape, dtype?, key?, stream?)
+Napi::Value RandomRandint(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+  if (info.Length() < 3) {
+    Napi::TypeError::New(env, "random.randint expects low, high, and shape")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto low = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto high = ToArray(env, info[1]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto shape = ParseShapeArgument(env, info[2]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto dtype = mlx::core::int32;
+  size_t nextIdx = 3;
+  if (addon && info.Length() > nextIdx && IsDtypeArg(env, info[nextIdx], *addon)) {
+    dtype = MaybeParseDtype(env, info[nextIdx], mlx::core::int32, *addon);
+    if (env.IsExceptionPending()) return env.Null();
+    nextIdx++;
+  }
+  std::optional<mlx::core::array> key = std::nullopt;
+  if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
+      !info[nextIdx].IsArray()) {
+    auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+        info[nextIdx].As<Napi::Object>());
+    if (wrapper) { key = wrapper->tensor(); nextIdx++; }
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env,
+      std::make_shared<mlx::core::array>(
+          mlx::core::random::randint(low, high, shape, dtype, key, streamArg)));
+}
+
+// random.categorical(logits, axis?, key?, stream?)
+Napi::Value RandomCategorical(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "random.categorical expects logits array")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto logits = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  int axis = -1;
+  size_t nextIdx = 1;
+  if (info.Length() > nextIdx && info[nextIdx].IsNumber()) {
+    axis = info[nextIdx].As<Napi::Number>().Int32Value();
+    nextIdx++;
+  }
+  std::optional<mlx::core::array> key = std::nullopt;
+  if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
+      !info[nextIdx].IsArray()) {
+    auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+        info[nextIdx].As<Napi::Object>());
+    if (wrapper) { key = wrapper->tensor(); nextIdx++; }
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env,
+      std::make_shared<mlx::core::array>(
+          mlx::core::random::categorical(logits, axis, key, streamArg)));
+}
+
+// random.permutation(x_or_n, axis?, key?, stream?)
+Napi::Value RandomPermutation(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "random.permutation expects array or int")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  size_t nextIdx = 1;
+  if (info[0].IsNumber()) {
+    int n = info[0].As<Napi::Number>().Int32Value();
+    std::optional<mlx::core::array> key = std::nullopt;
+    if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
+        !info[nextIdx].IsArray()) {
+      auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+          info[nextIdx].As<Napi::Object>());
+      if (wrapper) { key = wrapper->tensor(); nextIdx++; }
+    }
+    auto streamArg = GetStreamArgument(info, nextIdx);
+    if (env.IsExceptionPending()) return env.Null();
+    return WrapArray(env,
+        std::make_shared<mlx::core::array>(
+            mlx::core::random::permutation(n, key, streamArg)));
+  }
+  auto x = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  int axis = 0;
+  if (info.Length() > nextIdx && info[nextIdx].IsNumber()) {
+    axis = info[nextIdx].As<Napi::Number>().Int32Value();
+    nextIdx++;
+  }
+  std::optional<mlx::core::array> key = std::nullopt;
+  if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
+      !info[nextIdx].IsArray()) {
+    auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+        info[nextIdx].As<Napi::Object>());
+    if (wrapper) { key = wrapper->tensor(); nextIdx++; }
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env,
+      std::make_shared<mlx::core::array>(
+          mlx::core::random::permutation(x, axis, key, streamArg)));
+}
+
+// random.gumbel(shape, dtype?, key?, stream?)
+Napi::Value RandomGumbel(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "random.gumbel expects shape")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto shape = ParseShapeArgument(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto dtype = mlx::core::float32;
+  size_t nextIdx = 1;
+  if (addon && info.Length() > nextIdx && IsDtypeArg(env, info[nextIdx], *addon)) {
+    dtype = MaybeParseDtype(env, info[nextIdx], mlx::core::float32, *addon);
+    if (env.IsExceptionPending()) return env.Null();
+    nextIdx++;
+  }
+  std::optional<mlx::core::array> key = std::nullopt;
+  if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
+      !info[nextIdx].IsArray()) {
+    auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+        info[nextIdx].As<Napi::Object>());
+    if (wrapper) { key = wrapper->tensor(); nextIdx++; }
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env,
+      std::make_shared<mlx::core::array>(
+          mlx::core::random::gumbel(shape, dtype, key, streamArg)));
+}
+
+// random.laplace(shape, dtype?, key?, stream?)
+Napi::Value RandomLaplace(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "random.laplace expects shape")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto shape = ParseShapeArgument(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto dtype = mlx::core::float32;
+  size_t nextIdx = 1;
+  if (addon && info.Length() > nextIdx && IsDtypeArg(env, info[nextIdx], *addon)) {
+    dtype = MaybeParseDtype(env, info[nextIdx], mlx::core::float32, *addon);
+    if (env.IsExceptionPending()) return env.Null();
+    nextIdx++;
+  }
+  std::optional<mlx::core::array> key = std::nullopt;
+  if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
+      !info[nextIdx].IsArray()) {
+    auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+        info[nextIdx].As<Napi::Object>());
+    if (wrapper) { key = wrapper->tensor(); nextIdx++; }
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env,
+      std::make_shared<mlx::core::array>(
+          mlx::core::random::laplace(shape, dtype, key, streamArg)));
+}
+
+// random.truncated_normal(lower, upper, shape?, dtype?, key?, stream?)
+Napi::Value RandomTruncatedNormal(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+  if (info.Length() < 2) {
+    Napi::TypeError::New(env, "random.truncated_normal expects lower and upper")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto lower = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto upper = ToArray(env, info[1]);
+  if (env.IsExceptionPending()) return env.Null();
+  size_t nextIdx = 2;
+  // Check for optional shape array
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto shape = ParseShapeArgument(env, info[nextIdx]);
+    if (env.IsExceptionPending()) return env.Null();
+    nextIdx++;
+    auto dtype = mlx::core::float32;
+    if (addon && info.Length() > nextIdx && IsDtypeArg(env, info[nextIdx], *addon)) {
+      dtype = MaybeParseDtype(env, info[nextIdx], mlx::core::float32, *addon);
+      if (env.IsExceptionPending()) return env.Null();
+      nextIdx++;
+    }
+    std::optional<mlx::core::array> key = std::nullopt;
+    if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
+        !info[nextIdx].IsArray()) {
+      auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+          info[nextIdx].As<Napi::Object>());
+      if (wrapper) { key = wrapper->tensor(); nextIdx++; }
+    }
+    auto streamArg = GetStreamArgument(info, nextIdx);
+    if (env.IsExceptionPending()) return env.Null();
+    return WrapArray(env,
+        std::make_shared<mlx::core::array>(
+            mlx::core::random::truncated_normal(
+                lower, upper, shape, dtype, key, streamArg)));
+  }
+  // No shape — use lower/upper shapes
+  auto dtype = mlx::core::float32;
+  if (addon && info.Length() > nextIdx && IsDtypeArg(env, info[nextIdx], *addon)) {
+    dtype = MaybeParseDtype(env, info[nextIdx], mlx::core::float32, *addon);
+    if (env.IsExceptionPending()) return env.Null();
+    nextIdx++;
+  }
+  std::optional<mlx::core::array> key = std::nullopt;
+  if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
+      !info[nextIdx].IsArray()) {
+    auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+        info[nextIdx].As<Napi::Object>());
+    if (wrapper) { key = wrapper->tensor(); nextIdx++; }
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env,
+      std::make_shared<mlx::core::array>(
+          mlx::core::random::truncated_normal(
+              lower, upper, dtype, key, streamArg)));
+}
+
+// random.multivariate_normal(mean, cov, shape, dtype?, key?, stream?)
+Napi::Value RandomMultivariateNormal(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+  if (info.Length() < 3) {
+    Napi::TypeError::New(env, "random.multivariate_normal expects mean, cov, and shape")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto mean = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto cov = ToArray(env, info[1]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto shape = ParseShapeArgument(env, info[2]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto dtype = mlx::core::float32;
+  size_t nextIdx = 3;
+  if (addon && info.Length() > nextIdx && IsDtypeArg(env, info[nextIdx], *addon)) {
+    dtype = MaybeParseDtype(env, info[nextIdx], mlx::core::float32, *addon);
+    if (env.IsExceptionPending()) return env.Null();
+    nextIdx++;
+  }
+  std::optional<mlx::core::array> key = std::nullopt;
+  if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
+      !info[nextIdx].IsArray()) {
+    auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+        info[nextIdx].As<Napi::Object>());
+    if (wrapper) { key = wrapper->tensor(); nextIdx++; }
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env,
+      std::make_shared<mlx::core::array>(
+          mlx::core::random::multivariate_normal(
+              mean, cov, shape, dtype, key, streamArg)));
+}
+
+// ===========================================================================
+// Device management
+// ===========================================================================
+
+Napi::Value DefaultDevice(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto& d = mlx::core::default_device();
+  auto result = Napi::Object::New(env);
+  result.Set("type", d.type == mlx::core::Device::cpu ? "cpu" : "gpu");
+  result.Set("index", Napi::Number::New(env, d.index));
+  return result;
+}
+
+Napi::Value SetDefaultDevice(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "set_default_device expects a device type string")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  std::string typeStr;
+  if (info[0].IsString()) {
+    typeStr = info[0].As<Napi::String>().Utf8Value();
+  } else if (info[0].IsObject()) {
+    auto obj = info[0].As<Napi::Object>();
+    typeStr = obj.Get("type").As<Napi::String>().Utf8Value();
+  }
+  mlx::core::Device::DeviceType dt = mlx::core::Device::cpu;
+  if (typeStr == "gpu") dt = mlx::core::Device::gpu;
+  mlx::core::set_default_device(mlx::core::Device(dt));
+  return env.Undefined();
+}
+
+Napi::Value IsAvailable(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "is_available expects a device type string")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  std::string typeStr;
+  if (info[0].IsString()) {
+    typeStr = info[0].As<Napi::String>().Utf8Value();
+  } else if (info[0].IsObject()) {
+    auto obj = info[0].As<Napi::Object>();
+    typeStr = obj.Get("type").As<Napi::String>().Utf8Value();
+  }
+  mlx::core::Device::DeviceType dt = mlx::core::Device::cpu;
+  if (typeStr == "gpu") dt = mlx::core::Device::gpu;
+  return Napi::Boolean::New(env, mlx::core::is_available(mlx::core::Device(dt)));
+}
+
+// ===========================================================================
+// Memory management
+// ===========================================================================
+
+Napi::Value ClearCache(const Napi::CallbackInfo& info) {
+  mlx::core::clear_cache();
+  return info.Env().Undefined();
+}
+
+Napi::Value GetActiveMemory(const Napi::CallbackInfo& info) {
+  return Napi::Number::New(info.Env(), static_cast<double>(mlx::core::get_active_memory()));
+}
+
+Napi::Value GetCacheMemory(const Napi::CallbackInfo& info) {
+  return Napi::Number::New(info.Env(), static_cast<double>(mlx::core::get_cache_memory()));
+}
+
+Napi::Value GetPeakMemory(const Napi::CallbackInfo& info) {
+  return Napi::Number::New(info.Env(), static_cast<double>(mlx::core::get_peak_memory()));
+}
+
+Napi::Value ResetPeakMemory(const Napi::CallbackInfo& info) {
+  mlx::core::reset_peak_memory();
+  return info.Env().Undefined();
+}
+
+Napi::Value SetCacheLimit(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1 || !info[0].IsNumber()) {
+    Napi::TypeError::New(env, "set_cache_limit expects a number")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  size_t limit = static_cast<size_t>(info[0].As<Napi::Number>().Int64Value());
+  size_t prev = mlx::core::set_cache_limit(limit);
+  return Napi::Number::New(env, static_cast<double>(prev));
+}
+
+Napi::Value SetMemoryLimit(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1 || !info[0].IsNumber()) {
+    Napi::TypeError::New(env, "set_memory_limit expects a number")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  size_t limit = static_cast<size_t>(info[0].As<Napi::Number>().Int64Value());
+  size_t prev = mlx::core::set_memory_limit(limit);
+  return Napi::Number::New(env, static_cast<double>(prev));
+}
+
+Napi::Value SetWiredLimit(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1 || !info[0].IsNumber()) {
+    Napi::TypeError::New(env, "set_wired_limit expects a number")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  size_t limit = static_cast<size_t>(info[0].As<Napi::Number>().Int64Value());
+  size_t prev = mlx::core::set_wired_limit(limit);
+  return Napi::Number::New(env, static_cast<double>(prev));
+}
+
+// ===========================================================================
+// FFT ops
+// ===========================================================================
+
+// Helper to parse optional n (shape) and axes from args
+// fftn(a, n?, axes?, stream?)
+Napi::Value FFTn(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "fftn expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  size_t nextIdx = 1;
+  // Check for n (shape array) and axes (array of ints)
+  bool hasN = false, hasAxes = false;
+  std::vector<int> n, axes;
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    n.reserve(arr.Length());
+    for (uint32_t i = 0; i < arr.Length(); ++i)
+      n.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    hasN = true;
+    nextIdx++;
+  }
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    axes.reserve(arr.Length());
+    for (uint32_t i = 0; i < arr.Length(); ++i)
+      axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    hasAxes = true;
+    nextIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  mlx::core::array result = hasN && hasAxes
+      ? mlx::core::fft::fftn(a, mlx::core::Shape(n.begin(), n.end()), axes, streamArg)
+      : hasAxes ? mlx::core::fft::fftn(a, axes, streamArg)
+      : hasN ? mlx::core::fft::fftn(a, mlx::core::Shape(n.begin(), n.end()), axes, streamArg)
+      : mlx::core::fft::fftn(a, streamArg);
+  return WrapArray(env, std::make_shared<mlx::core::array>(result));
+}
+
+Napi::Value IFFTn(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "ifftn expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  size_t nextIdx = 1;
+  bool hasN = false, hasAxes = false;
+  std::vector<int> n, axes;
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    n.reserve(arr.Length());
+    for (uint32_t i = 0; i < arr.Length(); ++i)
+      n.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    hasN = true;
+    nextIdx++;
+  }
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    axes.reserve(arr.Length());
+    for (uint32_t i = 0; i < arr.Length(); ++i)
+      axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    hasAxes = true;
+    nextIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  mlx::core::array result = hasN && hasAxes
+      ? mlx::core::fft::ifftn(a, mlx::core::Shape(n.begin(), n.end()), axes, streamArg)
+      : hasAxes ? mlx::core::fft::ifftn(a, axes, streamArg)
+      : mlx::core::fft::ifftn(a, streamArg);
+  return WrapArray(env, std::make_shared<mlx::core::array>(result));
+}
+
+// fft(a, n?, axis?, stream?)
+Napi::Value FFT(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "fft expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  size_t nextIdx = 1;
+  int axis = -1;
+  bool hasN = false;
+  int n = 0;
+  if (info.Length() > nextIdx && info[nextIdx].IsNumber()) {
+    n = info[nextIdx].As<Napi::Number>().Int32Value();
+    hasN = true;
+    nextIdx++;
+  }
+  if (info.Length() > nextIdx && info[nextIdx].IsNumber()) {
+    axis = info[nextIdx].As<Napi::Number>().Int32Value();
+    nextIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  auto result = hasN
+      ? mlx::core::fft::fft(a, n, axis, streamArg)
+      : mlx::core::fft::fft(a, axis, streamArg);
+  return WrapArray(env, std::make_shared<mlx::core::array>(result));
+}
+
+Napi::Value IFFT(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "ifft expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  size_t nextIdx = 1;
+  int axis = -1;
+  bool hasN = false;
+  int n = 0;
+  if (info.Length() > nextIdx && info[nextIdx].IsNumber()) {
+    n = info[nextIdx].As<Napi::Number>().Int32Value();
+    hasN = true;
+    nextIdx++;
+  }
+  if (info.Length() > nextIdx && info[nextIdx].IsNumber()) {
+    axis = info[nextIdx].As<Napi::Number>().Int32Value();
+    nextIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  auto result = hasN
+      ? mlx::core::fft::ifft(a, n, axis, streamArg)
+      : mlx::core::fft::ifft(a, axis, streamArg);
+  return WrapArray(env, std::make_shared<mlx::core::array>(result));
+}
+
+// fft2(a, n?, axes?, stream?)
+Napi::Value FFT2(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "fft2 expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  size_t nextIdx = 1;
+  bool hasN = false, hasAxes = false;
+  std::vector<int> n, axes;
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    n.reserve(arr.Length());
+    for (uint32_t i = 0; i < arr.Length(); ++i)
+      n.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    hasN = true;
+    nextIdx++;
+  }
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    axes.reserve(arr.Length());
+    for (uint32_t i = 0; i < arr.Length(); ++i)
+      axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    hasAxes = true;
+    nextIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  auto result = hasN
+      ? mlx::core::fft::fft2(a, mlx::core::Shape(n.begin(), n.end()), axes.empty() ? std::vector<int>{-2, -1} : axes, streamArg)
+      : hasAxes ? mlx::core::fft::fft2(a, axes, streamArg)
+      : mlx::core::fft::fft2(a, std::vector<int>{-2, -1}, streamArg);
+  return WrapArray(env, std::make_shared<mlx::core::array>(result));
+}
+
+Napi::Value IFFT2(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "ifft2 expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  size_t nextIdx = 1;
+  bool hasN = false, hasAxes = false;
+  std::vector<int> n, axes;
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    n.reserve(arr.Length());
+    for (uint32_t i = 0; i < arr.Length(); ++i)
+      n.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    hasN = true;
+    nextIdx++;
+  }
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    axes.reserve(arr.Length());
+    for (uint32_t i = 0; i < arr.Length(); ++i)
+      axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    hasAxes = true;
+    nextIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  auto result = hasN
+      ? mlx::core::fft::ifft2(a, mlx::core::Shape(n.begin(), n.end()), axes.empty() ? std::vector<int>{-2, -1} : axes, streamArg)
+      : hasAxes ? mlx::core::fft::ifft2(a, axes, streamArg)
+      : mlx::core::fft::ifft2(a, std::vector<int>{-2, -1}, streamArg);
+  return WrapArray(env, std::make_shared<mlx::core::array>(result));
+}
+
+// Real FFT variants
+Napi::Value RFFTn(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "rfftn expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  size_t nextIdx = 1;
+  bool hasN = false, hasAxes = false;
+  std::vector<int> n, axes;
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    n.reserve(arr.Length());
+    for (uint32_t i = 0; i < arr.Length(); ++i)
+      n.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    hasN = true;
+    nextIdx++;
+  }
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    axes.reserve(arr.Length());
+    for (uint32_t i = 0; i < arr.Length(); ++i)
+      axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    hasAxes = true;
+    nextIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  auto result = hasN && hasAxes
+      ? mlx::core::fft::rfftn(a, mlx::core::Shape(n.begin(), n.end()), axes, streamArg)
+      : hasAxes ? mlx::core::fft::rfftn(a, axes, streamArg)
+      : mlx::core::fft::rfftn(a, streamArg);
+  return WrapArray(env, std::make_shared<mlx::core::array>(result));
+}
+
+Napi::Value IRFFTn(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "irfftn expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  size_t nextIdx = 1;
+  bool hasN = false, hasAxes = false;
+  std::vector<int> n, axes;
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    n.reserve(arr.Length());
+    for (uint32_t i = 0; i < arr.Length(); ++i)
+      n.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    hasN = true;
+    nextIdx++;
+  }
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    axes.reserve(arr.Length());
+    for (uint32_t i = 0; i < arr.Length(); ++i)
+      axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    hasAxes = true;
+    nextIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  auto result = hasN && hasAxes
+      ? mlx::core::fft::irfftn(a, mlx::core::Shape(n.begin(), n.end()), axes, streamArg)
+      : hasAxes ? mlx::core::fft::irfftn(a, axes, streamArg)
+      : mlx::core::fft::irfftn(a, streamArg);
+  return WrapArray(env, std::make_shared<mlx::core::array>(result));
+}
+
+Napi::Value RFFT(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "rfft expects at least one argument").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  size_t nextIdx = 1;
+  int axis = -1;
+  bool hasN = false;
+  int n = 0;
+  if (info.Length() > nextIdx && info[nextIdx].IsNumber()) {
+    n = info[nextIdx].As<Napi::Number>().Int32Value(); hasN = true; nextIdx++;
+  }
+  if (info.Length() > nextIdx && info[nextIdx].IsNumber()) {
+    axis = info[nextIdx].As<Napi::Number>().Int32Value(); nextIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  auto result = hasN ? mlx::core::fft::rfft(a, n, axis, streamArg)
+                     : mlx::core::fft::rfft(a, axis, streamArg);
+  return WrapArray(env, std::make_shared<mlx::core::array>(result));
+}
+
+Napi::Value IRFFT(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "irfft expects at least one argument").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  size_t nextIdx = 1;
+  int axis = -1;
+  bool hasN = false;
+  int n = 0;
+  if (info.Length() > nextIdx && info[nextIdx].IsNumber()) {
+    n = info[nextIdx].As<Napi::Number>().Int32Value(); hasN = true; nextIdx++;
+  }
+  if (info.Length() > nextIdx && info[nextIdx].IsNumber()) {
+    axis = info[nextIdx].As<Napi::Number>().Int32Value(); nextIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  auto result = hasN ? mlx::core::fft::irfft(a, n, axis, streamArg)
+                     : mlx::core::fft::irfft(a, axis, streamArg);
+  return WrapArray(env, std::make_shared<mlx::core::array>(result));
+}
+
+Napi::Value RFFT2(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "rfft2 expects at least one argument").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  size_t nextIdx = 1;
+  bool hasN = false, hasAxes = false;
+  std::vector<int> n, axes;
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); ++i) n.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    hasN = true; nextIdx++;
+  }
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); ++i) axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    hasAxes = true; nextIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  auto result = hasN
+      ? mlx::core::fft::rfft2(a, mlx::core::Shape(n.begin(), n.end()), axes.empty() ? std::vector<int>{-2,-1} : axes, streamArg)
+      : hasAxes ? mlx::core::fft::rfft2(a, axes, streamArg)
+      : mlx::core::fft::rfft2(a, std::vector<int>{-2,-1}, streamArg);
+  return WrapArray(env, std::make_shared<mlx::core::array>(result));
+}
+
+Napi::Value IRFFT2(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "irfft2 expects at least one argument").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  size_t nextIdx = 1;
+  bool hasN = false, hasAxes = false;
+  std::vector<int> n, axes;
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); ++i) n.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    hasN = true; nextIdx++;
+  }
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    for (uint32_t i = 0; i < arr.Length(); ++i) axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    hasAxes = true; nextIdx++;
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  auto result = hasN
+      ? mlx::core::fft::irfft2(a, mlx::core::Shape(n.begin(), n.end()), axes.empty() ? std::vector<int>{-2,-1} : axes, streamArg)
+      : hasAxes ? mlx::core::fft::irfft2(a, axes, streamArg)
+      : mlx::core::fft::irfft2(a, std::vector<int>{-2,-1}, streamArg);
+  return WrapArray(env, std::make_shared<mlx::core::array>(result));
+}
+
+// fftshift / ifftshift
+Napi::Value FFTShift(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "fftshift expects at least one argument").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  size_t nextIdx = 1;
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    std::vector<int> axes;
+    for (uint32_t i = 0; i < arr.Length(); ++i)
+      axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    nextIdx++;
+    auto streamArg = GetStreamArgument(info, nextIdx);
+    if (env.IsExceptionPending()) return env.Null();
+    return WrapArray(env, std::make_shared<mlx::core::array>(
+        mlx::core::fft::fftshift(a, axes, streamArg)));
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env, std::make_shared<mlx::core::array>(
+      mlx::core::fft::fftshift(a, streamArg)));
+}
+
+Napi::Value IFFTShift(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "ifftshift expects at least one argument").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  size_t nextIdx = 1;
+  if (info.Length() > nextIdx && info[nextIdx].IsArray()) {
+    auto arr = info[nextIdx].As<Napi::Array>();
+    std::vector<int> axes;
+    for (uint32_t i = 0; i < arr.Length(); ++i)
+      axes.push_back(arr.Get(i).As<Napi::Number>().Int32Value());
+    nextIdx++;
+    auto streamArg = GetStreamArgument(info, nextIdx);
+    if (env.IsExceptionPending()) return env.Null();
+    return WrapArray(env, std::make_shared<mlx::core::array>(
+        mlx::core::fft::ifftshift(a, axes, streamArg)));
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env, std::make_shared<mlx::core::array>(
+      mlx::core::fft::ifftshift(a, streamArg)));
+}
+
+// ===========================================================================
+// Fast ops (layer_norm, rms_norm, rope)
+// ===========================================================================
+
+// fast.rms_norm(x, weight, eps, stream?)
+Napi::Value FastRmsNorm(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 3) {
+    Napi::TypeError::New(env, "fast.rms_norm expects x, weight, and eps")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto x = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  std::optional<mlx::core::array> weight = std::nullopt;
+  if (!info[1].IsNull() && !info[1].IsUndefined()) {
+    weight = ToArray(env, info[1]);
+    if (env.IsExceptionPending()) return env.Null();
+  }
+  float eps = info[2].As<Napi::Number>().FloatValue();
+  auto streamArg = GetStreamArgument(info, 3);
+  if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env, std::make_shared<mlx::core::array>(
+      mlx::core::fast::rms_norm(x, weight, eps, streamArg)));
+}
+
+// fast.layer_norm(x, weight, bias, eps, stream?)
+Napi::Value FastLayerNorm(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 4) {
+    Napi::TypeError::New(env, "fast.layer_norm expects x, weight, bias, and eps")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto x = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  std::optional<mlx::core::array> weight = std::nullopt;
+  if (!info[1].IsNull() && !info[1].IsUndefined()) {
+    weight = ToArray(env, info[1]);
+    if (env.IsExceptionPending()) return env.Null();
+  }
+  std::optional<mlx::core::array> bias = std::nullopt;
+  if (!info[2].IsNull() && !info[2].IsUndefined()) {
+    bias = ToArray(env, info[2]);
+    if (env.IsExceptionPending()) return env.Null();
+  }
+  float eps = info[3].As<Napi::Number>().FloatValue();
+  auto streamArg = GetStreamArgument(info, 4);
+  if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env, std::make_shared<mlx::core::array>(
+      mlx::core::fast::layer_norm(x, weight, bias, eps, streamArg)));
+}
+
+// fast.rope(x, dims, traditional, base, scale, offset, freqs?, stream?)
+Napi::Value FastRope(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 6) {
+    Napi::TypeError::New(env, "fast.rope expects x, dims, traditional, base, scale, offset")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto x = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  int dims = info[1].As<Napi::Number>().Int32Value();
+  bool traditional = info[2].As<Napi::Boolean>().Value();
+  std::optional<float> base = std::nullopt;
+  if (!info[3].IsNull() && !info[3].IsUndefined()) {
+    base = info[3].As<Napi::Number>().FloatValue();
+  }
+  float scale = info[4].As<Napi::Number>().FloatValue();
+  int offset = info[5].As<Napi::Number>().Int32Value();
+  size_t nextIdx = 6;
+  std::optional<mlx::core::array> freqs = std::nullopt;
+  if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
+      !info[nextIdx].IsArray() && !info[nextIdx].IsNull()) {
+    auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+        info[nextIdx].As<Napi::Object>());
+    if (wrapper) { freqs = wrapper->tensor(); nextIdx++; }
+  }
+  auto streamArg = GetStreamArgument(info, nextIdx);
+  if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env, std::make_shared<mlx::core::array>(
+      mlx::core::fast::rope(x, dims, traditional, base, scale, offset, freqs, streamArg)));
+}
+
 } // namespace
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -5767,12 +6757,60 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   random.Set("uniform", Napi::Function::New(env, RandomUniform, "uniform", &data));
   random.Set("normal", Napi::Function::New(env, Normal, "normal", &data));
   random.Set("bernoulli", Napi::Function::New(env, Bernoulli, "bernoulli", &data));
+  random.Set("seed", Napi::Function::New(env, RandomSeed, "seed", &data));
+  random.Set("key", Napi::Function::New(env, RandomKey, "key", &data));
+  random.Set("split", Napi::Function::New(env, RandomSplit, "split", &data));
+  random.Set("randint", Napi::Function::New(env, RandomRandint, "randint", &data));
+  random.Set("categorical", Napi::Function::New(env, RandomCategorical, "categorical", &data));
+  random.Set("permutation", Napi::Function::New(env, RandomPermutation, "permutation", &data));
+  random.Set("gumbel", Napi::Function::New(env, RandomGumbel, "gumbel", &data));
+  random.Set("laplace", Napi::Function::New(env, RandomLaplace, "laplace", &data));
+  random.Set("truncated_normal", Napi::Function::New(env, RandomTruncatedNormal, "truncated_normal", &data));
+  random.Set("multivariate_normal", Napi::Function::New(env, RandomMultivariateNormal, "multivariate_normal", &data));
   core.Set("random", random);
 
   // Linear algebra operations under core.linalg (matches mlx.core.linalg.*)
   Napi::Object linalg = Napi::Object::New(env);
   linalg.Set("norm", Napi::Function::New(env, Norm, "norm", &data));
   core.Set("linalg", linalg);
+
+  // Device management
+  core.Set("default_device", Napi::Function::New(env, DefaultDevice, "default_device", &data));
+  core.Set("set_default_device", Napi::Function::New(env, SetDefaultDevice, "set_default_device", &data));
+  core.Set("is_available", Napi::Function::New(env, IsAvailable, "is_available", &data));
+
+  // Memory management
+  core.Set("clear_cache", Napi::Function::New(env, ClearCache, "clear_cache", &data));
+  core.Set("get_active_memory", Napi::Function::New(env, GetActiveMemory, "get_active_memory", &data));
+  core.Set("get_cache_memory", Napi::Function::New(env, GetCacheMemory, "get_cache_memory", &data));
+  core.Set("get_peak_memory", Napi::Function::New(env, GetPeakMemory, "get_peak_memory", &data));
+  core.Set("reset_peak_memory", Napi::Function::New(env, ResetPeakMemory, "reset_peak_memory", &data));
+  core.Set("set_cache_limit", Napi::Function::New(env, SetCacheLimit, "set_cache_limit", &data));
+  core.Set("set_memory_limit", Napi::Function::New(env, SetMemoryLimit, "set_memory_limit", &data));
+  core.Set("set_wired_limit", Napi::Function::New(env, SetWiredLimit, "set_wired_limit", &data));
+
+  // FFT namespace
+  Napi::Object fft = Napi::Object::New(env);
+  fft.Set("fft", Napi::Function::New(env, FFT, "fft", &data));
+  fft.Set("ifft", Napi::Function::New(env, IFFT, "ifft", &data));
+  fft.Set("fft2", Napi::Function::New(env, FFT2, "fft2", &data));
+  fft.Set("ifft2", Napi::Function::New(env, IFFT2, "ifft2", &data));
+  fft.Set("fftn", Napi::Function::New(env, FFTn, "fftn", &data));
+  fft.Set("ifftn", Napi::Function::New(env, IFFTn, "ifftn", &data));
+  fft.Set("rfft", Napi::Function::New(env, RFFT, "rfft", &data));
+  fft.Set("irfft", Napi::Function::New(env, IRFFT, "irfft", &data));
+  fft.Set("rfft2", Napi::Function::New(env, RFFT2, "rfft2", &data));
+  fft.Set("irfft2", Napi::Function::New(env, IRFFT2, "irfft2", &data));
+  fft.Set("rfftn", Napi::Function::New(env, RFFTn, "rfftn", &data));
+  fft.Set("irfftn", Napi::Function::New(env, IRFFTn, "irfftn", &data));
+  fft.Set("fftshift", Napi::Function::New(env, FFTShift, "fftshift", &data));
+  fft.Set("ifftshift", Napi::Function::New(env, IFFTShift, "ifftshift", &data));
+  core.Set("fft", fft);
+
+  // Fast ops (add to existing fast namespace)
+  fast.Set("rms_norm", Napi::Function::New(env, FastRmsNorm, "rms_norm", &data));
+  fast.Set("layer_norm", Napi::Function::New(env, FastLayerNorm, "layer_norm", &data));
+  fast.Set("rope", Napi::Function::New(env, FastRope, "rope", &data));
 
   // Export/import operations
   core.Set("import_function", Napi::Function::New(env, ImportFunction, "import_function", &data));
