@@ -2,10 +2,17 @@ import addon from './internal/addon';
 import * as utils from './utils';
 import * as core from './core';
 import * as streaming from './streaming';
-import * as react from './react';
 import * as optimizers from './optimizers';
 import * as nn_init from './nn_init';
 import * as nn from './nn';
+
+// React hooks are optional — only available when react is installed
+let react: any;
+try {
+  react = require('./react');
+} catch (_) {
+  react = {};
+}
 
 // Native addon utilities
 export const native = {

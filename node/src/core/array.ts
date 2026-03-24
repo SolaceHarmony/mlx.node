@@ -243,7 +243,7 @@ export class MLXArray {
   }
 
   get dtype(): DType {
-    return this.handle.dtype() as DType;
+    return this.handle.dtype().key as DType;
   }
 
   eval(): this {

@@ -479,9 +479,9 @@ class ArrayWrapper : public Napi::ObjectWrap<ArrayWrapper> {
 
     std::optional<mlx::core::Dtype> dtype;
     if (info.Length() >= 3) {
-      auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
-      if (addon && IsDtypeArg(env, info[2], *addon)) {
-        dtype = MaybeParseDtype(env, info[2], mlx::core::float32, *addon);
+      auto& addon = mlx::node::GetAddonData(env);
+      if (IsDtypeArg(env, info[2], addon)) {
+        dtype = MaybeParseDtype(env, info[2], mlx::core::float32, addon);
       }
       if (env.IsExceptionPending()) {
         return env.Null();
@@ -528,21 +528,23 @@ class ArrayWrapper : public Napi::ObjectWrap<ArrayWrapper> {
 
   Napi::Value ToFloat32Array(const Napi::CallbackInfo& info) {
     auto env = info.Env();
-    auto& arr = const_cast<mlx::core::array&>(tensor());
-    arr.eval();
+    // Flatten to ensure contiguous row-major layout (handles transposed/strided views)
+    auto flat = mlx::core::flatten(tensor());
+    flat.eval();
 
-    const auto length = arr.size();
+    const auto length = flat.size();
     Napi::ArrayBuffer buffer =
         Napi::ArrayBuffer::New(env, length * sizeof(float));
     Napi::Float32Array jsArray =
         Napi::Float32Array::New(env, length, buffer, 0);
-    std::memcpy(buffer.Data(), arr.data<float>(), length * sizeof(float));
+    std::memcpy(buffer.Data(), flat.data<float>(), length * sizeof(float));
     return jsArray;
   }
 
   Napi::Value ToTypedArray(const Napi::CallbackInfo& info) {
     auto env = info.Env();
-    auto& arr = const_cast<mlx::core::array&>(tensor());
+    // Flatten to ensure contiguous row-major layout (handles transposed/strided views)
+    auto arr = mlx::core::flatten(tensor());
     arr.eval();
 
     const auto dtype = arr.dtype();
@@ -1209,6 +1211,10 @@ mlx::core::Dtype MaybeParseDtype(
   if (value.IsUndefined() || value.IsNull()) {
     return fallback;
   }
+  // Accept string dtype keys directly (e.g. 'float32', 'bool')
+  if (value.IsString()) {
+    return ParseDtypeKey(env, value.As<Napi::String>().Utf8Value());
+  }
   // Use Dtype.key property (exported via InstanceAccessor) to avoid unwrap
   // issues
   if (value.IsObject()) {
@@ -1219,7 +1225,7 @@ mlx::core::Dtype MaybeParseDtype(
     }
   }
   Napi::TypeError::New(
-      env, "dtype must be a mlx.core.Dtype object (e.g., mlx.float32)")
+      env, "dtype must be a mlx.core.Dtype object or string (e.g., mlx.float32 or 'float32')")
       .ThrowAsJavaScriptException();
   return fallback;
 }
@@ -1230,6 +1236,11 @@ bool IsDtypeArg(
     mlx::node::AddonData&) {
   if (value.IsUndefined() || value.IsNull())
     return false;
+  // Accept string dtype keys (e.g. 'float32', 'bool')
+  if (value.IsString()) {
+    auto key = value.As<Napi::String>().Utf8Value();
+    return DtypeLookup().count(key) > 0;
+  }
   if (!value.IsObject())
     return false;
   auto obj = value.As<Napi::Object>();
@@ -4887,7 +4898,7 @@ Napi::Value ImportFunction(const Napi::CallbackInfo& info) {
                         if (!ctor.IsEmpty() && val_obj.InstanceOf(ctor)) {
                           const auto* wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(val_obj);
                           if (wrapper) {
-                            kwargs[key_str] = wrapper->tensor();
+                            kwargs.insert_or_assign(key_str, wrapper->tensor());
                           }
                         }
                       }
@@ -4930,7 +4941,7 @@ Napi::Value ImportFunction(const Napi::CallbackInfo& info) {
                       if (!ctor.IsEmpty() && val_obj.InstanceOf(ctor)) {
                         const auto* wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(val_obj);
                         if (wrapper) {
-                          kwargs[key_str] = wrapper->tensor();
+                          kwargs.insert_or_assign(key_str, wrapper->tensor());
                         }
                       }
                     }
