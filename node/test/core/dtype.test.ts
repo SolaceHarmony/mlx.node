@@ -7,7 +7,7 @@ describe('core.dtype', () => {
     assert.equal(f32.key, 'float32');
     assert.equal(f32.size, 4);
     assert.equal(f32.category, 'floating');
-    assert.equal(f32.toString(), 'core.float32');
+    assert.equal(f32.toString(), 'mlx.core.float32');
   });
 
   it('supports dtype.fromString lookup', () => {
