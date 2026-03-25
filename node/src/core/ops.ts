@@ -2301,3 +2301,502 @@ export namespace fft_ns {
 // Re-export fft namespace as "fft" for use in index
 export { fft_ns as fft };
 
+// ---------------------------------------------------------------------------
+// Batch 3: Additional core ops
+// ---------------------------------------------------------------------------
+
+// Simple unary ops
+export function log2(a: MLXArray, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.log2(...args));
+}
+
+export function log10(a: MLXArray, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.log10(...args));
+}
+
+export function isposinf(a: MLXArray, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.isposinf(...args));
+}
+
+export function isneginf(a: MLXArray, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.isneginf(...args));
+}
+
+export function bitwise_invert(a: MLXArray, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.bitwise_invert(...args));
+}
+
+export function conjugate(a: MLXArray, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.conjugate(...args));
+}
+
+/** Alias for conjugate */
+export const conj = conjugate;
+
+export function real(a: MLXArray, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.real(...args));
+}
+
+export function imag(a: MLXArray, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.imag(...args));
+}
+
+export function stop_gradient(a: MLXArray, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.stop_gradient(...args));
+}
+
+// Simple binary ops
+export function outer(a: MLXArray, b: MLXArray, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a), toNativeHandle(b)];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.outer(...args));
+}
+
+export function inner(a: MLXArray, b: MLXArray, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a), toNativeHandle(b)];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.inner(...args));
+}
+
+export function kron(a: MLXArray, b: MLXArray, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a), toNativeHandle(b)];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.kron(...args));
+}
+
+// Parameterized ops
+
+export interface NanToNumOptions extends StreamOptions {
+  nan?: number;
+  posinf?: number;
+  neginf?: number;
+}
+
+export function nan_to_num(a: MLXArray, options?: NanToNumOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  if (options?.nan !== undefined) args.push(options.nan);
+  if (options?.posinf !== undefined) args.push(options.posinf);
+  if (options?.neginf !== undefined) args.push(options.neginf);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.nan_to_num(...args));
+}
+
+export interface CloseOptions extends StreamOptions {
+  rtol?: number;
+  atol?: number;
+  equal_nan?: boolean;
+}
+
+export function allclose(a: MLXArray, b: MLXArray, options?: CloseOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a), toNativeHandle(b)];
+  if (options?.rtol !== undefined) args.push(options.rtol);
+  if (options?.atol !== undefined) args.push(options.atol);
+  if (options?.equal_nan !== undefined) args.push(options.equal_nan);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.allclose(...args));
+}
+
+export function isclose(a: MLXArray, b: MLXArray, options?: CloseOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a), toNativeHandle(b)];
+  if (options?.rtol !== undefined) args.push(options.rtol);
+  if (options?.atol !== undefined) args.push(options.atol);
+  if (options?.equal_nan !== undefined) args.push(options.equal_nan);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.isclose(...args));
+}
+
+export function view(a: MLXArray, dtype: DTypeLike, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a), dtype];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.view(...args));
+}
+
+export interface ContiguousOptions extends StreamOptions {
+  allow_col_major?: boolean;
+}
+
+export function contiguous(a: MLXArray, options?: ContiguousOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  if (options?.allow_col_major !== undefined) args.push(options.allow_col_major);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.contiguous(...args));
+}
+
+export function hadamard_transform(a: MLXArray, scale?: number, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  if (scale !== undefined) args.push(scale);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.hadamard_transform(...args));
+}
+
+export function unflatten(a: MLXArray, axis: number, shape: readonly number[], options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a), axis, [...shape]];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.unflatten(...args));
+}
+
+export interface PartitionOptions extends StreamOptions {
+  axis?: number;
+}
+
+export function partition(a: MLXArray, kth: number, options?: PartitionOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a), kth];
+  if (options?.axis !== undefined) args.push(options.axis);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.partition(...args));
+}
+
+export function argpartition(a: MLXArray, kth: number, options?: PartitionOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a), kth];
+  if (options?.axis !== undefined) args.push(options.axis);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.argpartition(...args));
+}
+
+export function put_along_axis(a: MLXArray, indices: MLXArray, values: MLXArray, axis: number, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a), toNativeHandle(indices), toNativeHandle(values), axis];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.put_along_axis(...args));
+}
+
+export interface RollOptions extends StreamOptions {
+  axis?: number | readonly number[];
+}
+
+export function roll(a: MLXArray, shift: number | readonly number[], options?: RollOptions): MLXArray {
+  const args: any[] = [
+    toNativeHandle(a),
+    Array.isArray(shift) ? [...shift] : shift,
+  ];
+  if (options?.axis !== undefined) {
+    args.push(Array.isArray(options.axis) ? [...options.axis] : options.axis);
+  }
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.roll(...args));
+}
+
+export interface TriCreateOptions extends StreamOptions {
+  m?: number;
+  k?: number;
+  dtype?: DTypeLike;
+}
+
+export function tri(n: number, options?: TriCreateOptions): MLXArray {
+  const args: any[] = [n];
+  if (options?.m !== undefined) args.push(options.m);
+  if (options?.k !== undefined) args.push(options.k);
+  if (options?.dtype !== undefined) args.push(options.dtype);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.tri(...args));
+}
+
+export interface MeshgridOptions extends StreamOptions {
+  sparse?: boolean;
+  indexing?: 'xy' | 'ij';
+}
+
+export function meshgrid(arrays: readonly MLXArray[], options?: MeshgridOptions): MLXArray[] {
+  const nativeArrays = arrays.map(a => toNativeHandle(a));
+  const args: any[] = [nativeArrays];
+  if (options?.sparse !== undefined) args.push(options.sparse);
+  if (options?.indexing !== undefined) args.push(options.indexing);
+  appendStreamArg(args, options?.stream);
+  const result = addon.meshgrid(...args);
+  return result.map((h: any) => MLXArray.fromHandle(h));
+}
+
+export function broadcast_arrays(arrays: readonly MLXArray[], options?: StreamOptions): MLXArray[] {
+  const nativeArrays = arrays.map(a => toNativeHandle(a));
+  const args: any[] = [nativeArrays];
+  appendStreamArg(args, options?.stream);
+  const result = addon.broadcast_arrays(...args);
+  return result.map((h: any) => MLXArray.fromHandle(h));
+}
+
+export function atleast_1d(a: MLXArray, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.atleast_1d(...args));
+}
+
+export function atleast_2d(a: MLXArray, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.atleast_2d(...args));
+}
+
+export function atleast_3d(a: MLXArray, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a)];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.atleast_3d(...args));
+}
+
+export interface SliceUpdateOptions extends StreamOptions {
+  strides?: readonly number[];
+}
+
+export function slice_update(src: MLXArray, update: MLXArray, start: readonly number[], stop: readonly number[], options?: SliceUpdateOptions): MLXArray {
+  const args: any[] = [toNativeHandle(src), toNativeHandle(update), [...start], [...stop]];
+  if (options?.strides !== undefined) args.push([...options.strides]);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.slice_update(...args));
+}
+
+export interface ConvGeneralOptions extends StreamOptions {
+  stride?: readonly number[];
+  padding_lo?: readonly number[];
+  padding_hi?: readonly number[];
+  kernel_dilation?: readonly number[];
+  input_dilation?: readonly number[];
+  groups?: number;
+  flip?: boolean;
+}
+
+export function conv_general(input: MLXArray, weight: MLXArray, options?: ConvGeneralOptions): MLXArray {
+  const args: any[] = [toNativeHandle(input), toNativeHandle(weight)];
+  args.push(options?.stride ? [...options.stride] : []);
+  args.push(options?.padding_lo ? [...options.padding_lo] : []);
+  args.push(options?.padding_hi ? [...options.padding_hi] : []);
+  args.push(options?.kernel_dilation ? [...options.kernel_dilation] : []);
+  args.push(options?.input_dilation ? [...options.input_dilation] : []);
+  if (options?.groups !== undefined) args.push(options.groups);
+  if (options?.flip !== undefined) args.push(options.flip);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.conv_general(...args));
+}
+
+export interface ConvTranspose1dOptions extends StreamOptions {
+  stride?: number;
+  padding?: number;
+  dilation?: number;
+  output_padding?: number;
+  groups?: number;
+}
+
+export function conv_transpose1d(input: MLXArray, weight: MLXArray, options?: ConvTranspose1dOptions): MLXArray {
+  const args: any[] = [toNativeHandle(input), toNativeHandle(weight)];
+  if (options?.stride !== undefined) args.push(options.stride);
+  if (options?.padding !== undefined) args.push(options.padding);
+  if (options?.dilation !== undefined) args.push(options.dilation);
+  if (options?.output_padding !== undefined) args.push(options.output_padding);
+  if (options?.groups !== undefined) args.push(options.groups);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.conv_transpose1d(...args));
+}
+
+export interface ConvTranspose2dOptions extends StreamOptions {
+  stride?: [number, number] | number;
+  padding?: [number, number] | number;
+  dilation?: [number, number] | number;
+  output_padding?: [number, number] | number;
+  groups?: number;
+}
+
+export function conv_transpose2d(input: MLXArray, weight: MLXArray, options?: ConvTranspose2dOptions): MLXArray {
+  const normPair = (v: [number, number] | number | undefined): [number, number] | undefined => {
+    if (v === undefined) return undefined;
+    return typeof v === 'number' ? [v, v] : v;
+  };
+  const args: any[] = [toNativeHandle(input), toNativeHandle(weight)];
+  const s = normPair(options?.stride); if (s) args.push(s);
+  const p = normPair(options?.padding); if (p) args.push(p);
+  const d = normPair(options?.dilation); if (d) args.push(d);
+  const op = normPair(options?.output_padding); if (op) args.push(op);
+  if (options?.groups !== undefined) args.push(options.groups);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.conv_transpose2d(...args));
+}
+
+export interface ConvTranspose3dOptions extends StreamOptions {
+  stride?: [number, number, number] | number;
+  padding?: [number, number, number] | number;
+  dilation?: [number, number, number] | number;
+  output_padding?: [number, number, number] | number;
+  groups?: number;
+}
+
+export function conv_transpose3d(input: MLXArray, weight: MLXArray, options?: ConvTranspose3dOptions): MLXArray {
+  const normTriple = (v: [number, number, number] | number | undefined): [number, number, number] | undefined => {
+    if (v === undefined) return undefined;
+    return typeof v === 'number' ? [v, v, v] : v;
+  };
+  const args: any[] = [toNativeHandle(input), toNativeHandle(weight)];
+  const s = normTriple(options?.stride); if (s) args.push(s);
+  const p = normTriple(options?.padding); if (p) args.push(p);
+  const d = normTriple(options?.dilation); if (d) args.push(d);
+  const op = normTriple(options?.output_padding); if (op) args.push(op);
+  if (options?.groups !== undefined) args.push(options.groups);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.conv_transpose3d(...args));
+}
+
+export function einsum(subscripts: string, operands: readonly MLXArray[], options?: StreamOptions): MLXArray {
+  const nativeOps = operands.map(a => toNativeHandle(a));
+  const args: any[] = [subscripts, nativeOps];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.einsum(...args));
+}
+
+export function tensordot(a: MLXArray, b: MLXArray, axes: number | [readonly number[], readonly number[]], options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a), toNativeHandle(b)];
+  if (typeof axes === 'number') {
+    args.push(axes);
+  } else {
+    args.push([[...axes[0]], [...axes[1]]]);
+  }
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.tensordot(...args));
+}
+
+export interface BlockMaskedMMOptions extends StreamOptions {
+  mask_out?: MLXArray | null;
+  mask_lhs?: MLXArray | null;
+  mask_rhs?: MLXArray | null;
+}
+
+export function block_masked_mm(a: MLXArray, b: MLXArray, block_size: number, options?: BlockMaskedMMOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a), toNativeHandle(b), block_size];
+  args.push(options?.mask_out ? toNativeHandle(options.mask_out) : null);
+  args.push(options?.mask_lhs ? toNativeHandle(options.mask_lhs) : null);
+  args.push(options?.mask_rhs ? toNativeHandle(options.mask_rhs) : null);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.block_masked_mm(...args));
+}
+
+export interface GatherMMOptions extends StreamOptions {
+  lhs_indices?: MLXArray | null;
+  rhs_indices?: MLXArray | null;
+  sorted_indices?: boolean;
+}
+
+export function gather_mm(a: MLXArray, b: MLXArray, options?: GatherMMOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a), toNativeHandle(b)];
+  args.push(options?.lhs_indices ? toNativeHandle(options.lhs_indices) : null);
+  args.push(options?.rhs_indices ? toNativeHandle(options.rhs_indices) : null);
+  if (options?.sorted_indices !== undefined) args.push(options.sorted_indices);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.gather_mm(...args));
+}
+
+export function segmented_mm(a: MLXArray, b: MLXArray, segments: MLXArray, options?: StreamOptions): MLXArray {
+  const args: any[] = [toNativeHandle(a), toNativeHandle(b), toNativeHandle(segments)];
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.segmented_mm(...args));
+}
+
+export interface QuantizeOptions extends StreamOptions {
+  group_size?: number;
+  bits?: number;
+  mode?: string;
+}
+
+export function quantize(w: MLXArray, options?: QuantizeOptions): [MLXArray, MLXArray, MLXArray] {
+  const args: any[] = [toNativeHandle(w)];
+  if (options?.group_size !== undefined) args.push(options.group_size);
+  if (options?.bits !== undefined) args.push(options.bits);
+  if (options?.mode !== undefined) args.push(options.mode);
+  appendStreamArg(args, options?.stream);
+  const result = addon.quantize(...args);
+  return [MLXArray.fromHandle(result[0]), MLXArray.fromHandle(result[1]), MLXArray.fromHandle(result[2])];
+}
+
+export interface DequantizeOptions extends StreamOptions {
+  biases?: MLXArray | null;
+  group_size?: number;
+  bits?: number;
+  mode?: string;
+}
+
+export function dequantize(w: MLXArray, scales: MLXArray, options?: DequantizeOptions): MLXArray {
+  const args: any[] = [toNativeHandle(w), toNativeHandle(scales)];
+  args.push(options?.biases ? toNativeHandle(options.biases) : null);
+  if (options?.group_size !== undefined) args.push(options.group_size);
+  if (options?.bits !== undefined) args.push(options.bits);
+  if (options?.mode !== undefined) args.push(options.mode);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.dequantize(...args));
+}
+
+export interface QuantizedMatmulOptions extends StreamOptions {
+  biases?: MLXArray | null;
+  transpose?: boolean;
+  group_size?: number;
+  bits?: number;
+  mode?: string;
+}
+
+export function quantized_matmul(x: MLXArray, w: MLXArray, scales: MLXArray, options?: QuantizedMatmulOptions): MLXArray {
+  const args: any[] = [toNativeHandle(x), toNativeHandle(w), toNativeHandle(scales)];
+  args.push(options?.biases ? toNativeHandle(options.biases) : null);
+  if (options?.transpose !== undefined) args.push(options.transpose);
+  if (options?.group_size !== undefined) args.push(options.group_size);
+  if (options?.bits !== undefined) args.push(options.bits);
+  if (options?.mode !== undefined) args.push(options.mode);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.quantized_matmul(...args));
+}
+
+export interface GatherQMMOptions extends StreamOptions {
+  biases?: MLXArray | null;
+  lhs_indices?: MLXArray | null;
+  rhs_indices?: MLXArray | null;
+  transpose?: boolean;
+  group_size?: number;
+  bits?: number;
+  mode?: string;
+  sorted_indices?: boolean;
+}
+
+export function gather_qmm(x: MLXArray, w: MLXArray, scales: MLXArray, options?: GatherQMMOptions): MLXArray {
+  const args: any[] = [toNativeHandle(x), toNativeHandle(w), toNativeHandle(scales)];
+  args.push(options?.biases ? toNativeHandle(options.biases) : null);
+  args.push(options?.lhs_indices ? toNativeHandle(options.lhs_indices) : null);
+  args.push(options?.rhs_indices ? toNativeHandle(options.rhs_indices) : null);
+  if (options?.transpose !== undefined) args.push(options.transpose);
+  if (options?.group_size !== undefined) args.push(options.group_size);
+  if (options?.bits !== undefined) args.push(options.bits);
+  if (options?.mode !== undefined) args.push(options.mode);
+  if (options?.sorted_indices !== undefined) args.push(options.sorted_indices);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.gather_qmm(...args));
+}
+
+// TS-only aliases and wrappers
+
+/** Alias: concatenate arrays along an axis */
+export function concat(arrays: readonly MLXArray[], axis?: number, options?: StreamOptions): MLXArray {
+  const nativeArrays = arrays.map(a => toNativeHandle(a));
+  const args: any[] = [nativeArrays];
+  if (axis !== undefined) args.push(axis);
+  appendStreamArg(args, options?.stream);
+  return MLXArray.fromHandle(addon.concatenate(...args));
+}
+
+/** Alias: divmod returns [floor_divide(a,b), remainder(a,b)] */
+export function divmod(a: MLXArray, b: MLXArray, options?: StreamOptions): [MLXArray, MLXArray] {
+  return [floor_divide(a, b, options), remainder(a, b, options)];
+}
+
+/** Alias for transpose */
+export function permute_dims(a: MLXArray, axes?: readonly number[], options?: StreamOptions): MLXArray {
+  return transpose(a, axes, options);
+}
+
