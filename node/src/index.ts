@@ -233,6 +233,16 @@ export const {
   save,
   save_safetensors,
   save_gguf,
+  // Batch 6: transforms
+  grad,
+  value_and_grad,
+  vjp,
+  jvp,
+  vmap,
+  compile: compile_fn,
+  enable_compile,
+  disable_compile,
+  checkpoint,
   // DType constants
   bool,
   int8,

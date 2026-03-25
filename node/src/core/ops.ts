@@ -3090,3 +3090,159 @@ export function save_gguf(
   addon.save_gguf(file, nativeArrays);
 }
 
+// ============================================================
+// Transform ops
+// ============================================================
+
+type ArrayFn = (...args: MLXArray[]) => MLXArray;
+type MultiArrayFn = (...args: MLXArray[]) => MLXArray | MLXArray[];
+
+/** Return a function that computes the gradient of fn w.r.t. argnums */
+export function grad(fn: ArrayFn, argnums?: number | number[]): (...args: MLXArray[]) => MLXArray | MLXArray[] {
+  const nativeFn = (...nativeArgs: any[]) => {
+    const jsArgs = nativeArgs.map((a: any) => MLXArray.fromHandle(a));
+    const result = fn(...jsArgs);
+    return toNativeHandle(result);
+  };
+  const gradNative = addon.grad(nativeFn, argnums);
+  return (...args: MLXArray[]) => {
+    const nativeArgs = args.map(toNativeHandle);
+    const result = gradNative(...nativeArgs);
+    if (Array.isArray(result)) {
+      return result.map((r: any) => MLXArray.fromHandle(r));
+    }
+    return MLXArray.fromHandle(result);
+  };
+}
+
+/** Return a function that computes both the value and gradient of fn */
+export function value_and_grad(fn: ArrayFn, argnums?: number | number[]): (...args: MLXArray[]) => [MLXArray, MLXArray[]] {
+  const nativeFn = (...nativeArgs: any[]) => {
+    const jsArgs = nativeArgs.map((a: any) => MLXArray.fromHandle(a));
+    const result = fn(...jsArgs);
+    return toNativeHandle(result);
+  };
+  const vgNative = addon.value_and_grad(nativeFn, argnums);
+  return (...args: MLXArray[]) => {
+    const nativeArgs = args.map(toNativeHandle);
+    const [value, grads] = vgNative(...nativeArgs);
+    return [
+      MLXArray.fromHandle(value),
+      grads.map((g: any) => MLXArray.fromHandle(g)),
+    ];
+  };
+}
+
+/** Compute the vector-Jacobian product */
+export function vjp(
+  fn: MultiArrayFn,
+  primals: MLXArray[],
+  cotangents: MLXArray[],
+): [MLXArray[], MLXArray[]] {
+  const nativeFn = (...nativeArgs: any[]) => {
+    const jsArgs = nativeArgs.map((a: any) => MLXArray.fromHandle(a));
+    const result = fn(...jsArgs);
+    if (Array.isArray(result)) return result.map(toNativeHandle);
+    return toNativeHandle(result);
+  };
+  const nativePrimals = primals.map(toNativeHandle);
+  const nativeCotangents = cotangents.map(toNativeHandle);
+  const [outputs, vjps] = addon.vjp(nativeFn, nativePrimals, nativeCotangents);
+  return [
+    outputs.map((o: any) => MLXArray.fromHandle(o)),
+    vjps.map((v: any) => MLXArray.fromHandle(v)),
+  ];
+}
+
+/** Compute the Jacobian-vector product */
+export function jvp(
+  fn: MultiArrayFn,
+  primals: MLXArray[],
+  tangents: MLXArray[],
+): [MLXArray[], MLXArray[]] {
+  const nativeFn = (...nativeArgs: any[]) => {
+    const jsArgs = nativeArgs.map((a: any) => MLXArray.fromHandle(a));
+    const result = fn(...jsArgs);
+    if (Array.isArray(result)) return result.map(toNativeHandle);
+    return toNativeHandle(result);
+  };
+  const nativePrimals = primals.map(toNativeHandle);
+  const nativeTangents = tangents.map(toNativeHandle);
+  const [outputs, jvps] = addon.jvp(nativeFn, nativePrimals, nativeTangents);
+  return [
+    outputs.map((o: any) => MLXArray.fromHandle(o)),
+    jvps.map((v: any) => MLXArray.fromHandle(v)),
+  ];
+}
+
+/** Vectorize a function over a batch dimension */
+export function vmap(
+  fn: MultiArrayFn,
+  in_axes?: number[],
+  out_axes?: number[],
+): (...args: MLXArray[]) => MLXArray | MLXArray[] {
+  const nativeFn = (...nativeArgs: any[]) => {
+    const jsArgs = nativeArgs.map((a: any) => MLXArray.fromHandle(a));
+    const result = fn(...jsArgs);
+    if (Array.isArray(result)) return result.map(toNativeHandle);
+    return toNativeHandle(result);
+  };
+  const vmapNative = addon.vmap(nativeFn, in_axes, out_axes);
+  return (...args: MLXArray[]) => {
+    const nativeArgs = args.map(toNativeHandle);
+    const result = vmapNative(...nativeArgs);
+    if (Array.isArray(result)) {
+      return result.map((r: any) => MLXArray.fromHandle(r));
+    }
+    return MLXArray.fromHandle(result);
+  };
+}
+
+/** JIT compile a function for improved performance */
+export function compile_fn(fn: MultiArrayFn, shapeless?: boolean): (...args: MLXArray[]) => MLXArray | MLXArray[] {
+  const nativeFn = (...nativeArgs: any[]) => {
+    const jsArgs = nativeArgs.map((a: any) => MLXArray.fromHandle(a));
+    const result = fn(...jsArgs);
+    if (Array.isArray(result)) return result.map(toNativeHandle);
+    return toNativeHandle(result);
+  };
+  const compiledNative = addon.compile(nativeFn, shapeless);
+  return (...args: MLXArray[]) => {
+    const nativeArgs = args.map(toNativeHandle);
+    const result = compiledNative(...nativeArgs);
+    if (Array.isArray(result)) {
+      return result.map((r: any) => MLXArray.fromHandle(r));
+    }
+    return MLXArray.fromHandle(result);
+  };
+}
+
+/** Globally enable graph compilation */
+export function enable_compile(): void {
+  addon.enable_compile();
+}
+
+/** Globally disable graph compilation */
+export function disable_compile(): void {
+  addon.disable_compile();
+}
+
+/** Checkpoint a function to recompute intermediates during backprop */
+export function checkpoint(fn: MultiArrayFn): (...args: MLXArray[]) => MLXArray | MLXArray[] {
+  const nativeFn = (...nativeArgs: any[]) => {
+    const jsArgs = nativeArgs.map((a: any) => MLXArray.fromHandle(a));
+    const result = fn(...jsArgs);
+    if (Array.isArray(result)) return result.map(toNativeHandle);
+    return toNativeHandle(result);
+  };
+  const cpNative = addon.checkpoint(nativeFn);
+  return (...args: MLXArray[]) => {
+    const nativeArgs = args.map(toNativeHandle);
+    const result = cpNative(...nativeArgs);
+    if (Array.isArray(result)) {
+      return result.map((r: any) => MLXArray.fromHandle(r));
+    }
+    return MLXArray.fromHandle(result);
+  };
+}
+
