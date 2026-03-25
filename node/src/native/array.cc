@@ -7785,6 +7785,354 @@ Napi::Value LinalgCross(const Napi::CallbackInfo& info) {
 }
 
 // ============================================================
+// Transform infrastructure
+// ============================================================
+
+// Base class for type-erased callable data stored on wrapped JS functions
+struct TransformFnData {
+  virtual ~TransformFnData() = default;
+  virtual Napi::Value call(const Napi::CallbackInfo& info) = 0;
+};
+
+// Single dispatch function for all wrapped transform functions
+static Napi::Value TransformFnDispatch(const Napi::CallbackInfo& info) {
+  auto* data = static_cast<TransformFnData*>(info.Data());
+  return data->call(info);
+}
+
+// Create a JS function from a TransformFnData, with GC-safe cleanup
+static Napi::Function MakeTransformFn(
+    Napi::Env env, TransformFnData* data, const char* name) {
+  auto jsFn = Napi::Function::New(env, TransformFnDispatch, name, data);
+  auto ext = Napi::External<TransformFnData>::New(env, data,
+    [](Napi::Env, TransformFnData* p) { delete p; });
+  jsFn.Set("_prevent_gc", ext);
+  return jsFn;
+}
+
+// Wrap a JS function as C++ std::function<vector<array>(const vector<array>&)>
+// Each input array is passed as a separate argument to the JS function.
+static std::function<std::vector<mlx::core::array>(const std::vector<mlx::core::array>&)>
+WrapJsFn(Napi::Function jsFn) {
+  auto fnRef = std::make_shared<Napi::FunctionReference>(Napi::Persistent(jsFn));
+  return [fnRef](const std::vector<mlx::core::array>& inputs)
+      -> std::vector<mlx::core::array> {
+    auto env = fnRef->Env();
+    std::vector<napi_value> jsArgs;
+    jsArgs.reserve(inputs.size());
+    for (const auto& input : inputs) {
+      jsArgs.push_back(WrapArray(env, std::make_shared<mlx::core::array>(input)));
+    }
+    auto result = fnRef->Call(jsArgs);
+    if (env.IsExceptionPending()) {
+      throw std::runtime_error("JavaScript function threw an error");
+    }
+    std::vector<mlx::core::array> outputs;
+    if (result.IsArray()) {
+      auto jsArr = result.As<Napi::Array>();
+      for (uint32_t i = 0; i < jsArr.Length(); i++) {
+        outputs.push_back(ToArray(env, jsArr.Get(i)));
+      }
+    } else {
+      outputs.push_back(ToArray(env, result));
+    }
+    return outputs;
+  };
+}
+
+// Scalar variant: wrap JS fn as vector<array> -> array (single output)
+static std::function<mlx::core::array(const std::vector<mlx::core::array>&)>
+WrapJsFnScalar(Napi::Function jsFn) {
+  auto multi = WrapJsFn(jsFn);
+  return [multi](const std::vector<mlx::core::array>& inputs) -> mlx::core::array {
+    auto outputs = multi(inputs);
+    if (outputs.empty()) throw std::runtime_error("Function must return at least one array");
+    return outputs[0];
+  };
+}
+
+// Parse argnums from JS arg at index idx (number, array of numbers, or default {0})
+static std::vector<int> ParseArgnums(const Napi::CallbackInfo& info, size_t idx) {
+  if (info.Length() <= idx) return {0};
+  if (info[idx].IsNumber()) return {info[idx].As<Napi::Number>().Int32Value()};
+  if (info[idx].IsArray()) {
+    auto jsArr = info[idx].As<Napi::Array>();
+    std::vector<int> argnums;
+    for (uint32_t i = 0; i < jsArr.Length(); i++)
+      argnums.push_back(jsArr.Get(i).As<Napi::Number>().Int32Value());
+    return argnums;
+  }
+  return {0};
+}
+
+// ============================================================
+// Transform implementations
+// ============================================================
+
+Napi::Value EnableCompile(const Napi::CallbackInfo& info) {
+  mlx::core::enable_compile();
+  return info.Env().Undefined();
+}
+
+Napi::Value DisableCompile(const Napi::CallbackInfo& info) {
+  mlx::core::disable_compile();
+  return info.Env().Undefined();
+}
+
+// Callable data for functions that return vector<array>
+struct ArrayFnData : TransformFnData {
+  explicit ArrayFnData(std::function<std::vector<mlx::core::array>(const std::vector<mlx::core::array>&)> f) : fn(std::move(f)) {}
+  std::function<std::vector<mlx::core::array>(const std::vector<mlx::core::array>&)> fn;
+  Napi::Value call(const Napi::CallbackInfo& info) override {
+    auto env = info.Env();
+    std::vector<mlx::core::array> inputs;
+    for (size_t i = 0; i < info.Length(); i++) {
+      inputs.push_back(ToArray(env, info[i]));
+      if (env.IsExceptionPending()) return env.Null();
+    }
+    try {
+      auto result = fn(inputs);
+      if (result.size() == 1)
+        return WrapArray(env, std::make_shared<mlx::core::array>(result[0]));
+      auto jsArr = Napi::Array::New(env, result.size());
+      for (size_t i = 0; i < result.size(); i++)
+        jsArr.Set(uint32_t(i), WrapArray(env, std::make_shared<mlx::core::array>(result[i])));
+      return jsArr;
+    } catch (const std::exception& e) {
+      if (!env.IsExceptionPending())
+        Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+      return env.Null();
+    }
+  }
+};
+
+// Callable data for value_and_grad (returns [scalar_value, [grads...]])
+struct ValueAndGradData : TransformFnData {
+  explicit ValueAndGradData(mlx::core::SimpleValueAndGradFn f) : fn(std::move(f)) {}
+  mlx::core::SimpleValueAndGradFn fn;
+  Napi::Value call(const Napi::CallbackInfo& info) override {
+    auto env = info.Env();
+    std::vector<mlx::core::array> inputs;
+    for (size_t i = 0; i < info.Length(); i++) {
+      inputs.push_back(ToArray(env, info[i]));
+      if (env.IsExceptionPending()) return env.Null();
+    }
+    try {
+      auto [value, grads] = fn(inputs);
+      auto result = Napi::Array::New(env, 2);
+      result.Set(uint32_t(0), WrapArray(env, std::make_shared<mlx::core::array>(value)));
+      auto jsGrads = Napi::Array::New(env, grads.size());
+      for (size_t i = 0; i < grads.size(); i++)
+        jsGrads.Set(uint32_t(i), WrapArray(env, std::make_shared<mlx::core::array>(grads[i])));
+      result.Set(uint32_t(1), jsGrads);
+      return result;
+    } catch (const std::exception& e) {
+      if (!env.IsExceptionPending())
+        Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+      return env.Null();
+    }
+  }
+};
+
+// grad(fn, argnums?) -> fn
+Napi::Value GradOp(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1 || !info[0].IsFunction()) {
+    Napi::TypeError::New(env, "grad requires a function argument").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  try {
+    auto scalarFn = WrapJsFnScalar(info[0].As<Napi::Function>());
+    auto argnums = ParseArgnums(info, 1);
+    auto gradFn = mlx::core::grad(scalarFn, argnums);
+    return MakeTransformFn(env, new ArrayFnData{std::move(gradFn)}, "grad");
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+}
+
+// value_and_grad(fn, argnums?) -> fn
+Napi::Value ValueAndGradOp(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1 || !info[0].IsFunction()) {
+    Napi::TypeError::New(env, "value_and_grad requires a function argument").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  try {
+    auto scalarFn = WrapJsFnScalar(info[0].As<Napi::Function>());
+    auto argnums = ParseArgnums(info, 1);
+    auto vgFn = mlx::core::value_and_grad(scalarFn, argnums);
+    return MakeTransformFn(env, new ValueAndGradData{std::move(vgFn)}, "value_and_grad");
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+}
+
+// vjp(fn, primals, cotangents) -> [outputs, vjps]
+Napi::Value VjpOp(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 3 || !info[0].IsFunction()) {
+    Napi::TypeError::New(env, "vjp requires (fn, primals, cotangents)").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  try {
+    auto multiFn = WrapJsFn(info[0].As<Napi::Function>());
+    // Parse primals and cotangents (arrays of MLXArrays)
+    std::vector<mlx::core::array> primals, cotangents;
+    if (info[1].IsArray()) {
+      auto jsArr = info[1].As<Napi::Array>();
+      for (uint32_t i = 0; i < jsArr.Length(); i++) {
+        primals.push_back(ToArray(env, jsArr.Get(i)));
+        if (env.IsExceptionPending()) return env.Null();
+      }
+    } else {
+      primals.push_back(ToArray(env, info[1]));
+      if (env.IsExceptionPending()) return env.Null();
+    }
+    if (info[2].IsArray()) {
+      auto jsArr = info[2].As<Napi::Array>();
+      for (uint32_t i = 0; i < jsArr.Length(); i++) {
+        cotangents.push_back(ToArray(env, jsArr.Get(i)));
+        if (env.IsExceptionPending()) return env.Null();
+      }
+    } else {
+      cotangents.push_back(ToArray(env, info[2]));
+      if (env.IsExceptionPending()) return env.Null();
+    }
+    auto [outputs, vjps] = mlx::core::vjp(multiFn, primals, cotangents);
+    auto result = Napi::Array::New(env, 2);
+    auto jsOutputs = Napi::Array::New(env, outputs.size());
+    for (size_t i = 0; i < outputs.size(); i++)
+      jsOutputs.Set(uint32_t(i), WrapArray(env, std::make_shared<mlx::core::array>(outputs[i])));
+    auto jsVjps = Napi::Array::New(env, vjps.size());
+    for (size_t i = 0; i < vjps.size(); i++)
+      jsVjps.Set(uint32_t(i), WrapArray(env, std::make_shared<mlx::core::array>(vjps[i])));
+    result.Set(uint32_t(0), jsOutputs);
+    result.Set(uint32_t(1), jsVjps);
+    return result;
+  } catch (const std::exception& e) {
+    if (!env.IsExceptionPending())
+      Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+}
+
+// jvp(fn, primals, tangents) -> [outputs, jvps]
+Napi::Value JvpOp(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 3 || !info[0].IsFunction()) {
+    Napi::TypeError::New(env, "jvp requires (fn, primals, tangents)").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  try {
+    auto multiFn = WrapJsFn(info[0].As<Napi::Function>());
+    std::vector<mlx::core::array> primals, tangents;
+    if (info[1].IsArray()) {
+      auto jsArr = info[1].As<Napi::Array>();
+      for (uint32_t i = 0; i < jsArr.Length(); i++) {
+        primals.push_back(ToArray(env, jsArr.Get(i)));
+        if (env.IsExceptionPending()) return env.Null();
+      }
+    } else {
+      primals.push_back(ToArray(env, info[1]));
+      if (env.IsExceptionPending()) return env.Null();
+    }
+    if (info[2].IsArray()) {
+      auto jsArr = info[2].As<Napi::Array>();
+      for (uint32_t i = 0; i < jsArr.Length(); i++) {
+        tangents.push_back(ToArray(env, jsArr.Get(i)));
+        if (env.IsExceptionPending()) return env.Null();
+      }
+    } else {
+      tangents.push_back(ToArray(env, info[2]));
+      if (env.IsExceptionPending()) return env.Null();
+    }
+    auto [outputs, jvps] = mlx::core::jvp(multiFn, primals, tangents);
+    auto result = Napi::Array::New(env, 2);
+    auto jsOutputs = Napi::Array::New(env, outputs.size());
+    for (size_t i = 0; i < outputs.size(); i++)
+      jsOutputs.Set(uint32_t(i), WrapArray(env, std::make_shared<mlx::core::array>(outputs[i])));
+    auto jsJvps = Napi::Array::New(env, jvps.size());
+    for (size_t i = 0; i < jvps.size(); i++)
+      jsJvps.Set(uint32_t(i), WrapArray(env, std::make_shared<mlx::core::array>(jvps[i])));
+    result.Set(uint32_t(0), jsOutputs);
+    result.Set(uint32_t(1), jsJvps);
+    return result;
+  } catch (const std::exception& e) {
+    if (!env.IsExceptionPending())
+      Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+}
+
+// vmap(fn, in_axes?, out_axes?) -> fn
+Napi::Value VmapOp(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1 || !info[0].IsFunction()) {
+    Napi::TypeError::New(env, "vmap requires a function argument").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  try {
+    auto multiFn = WrapJsFn(info[0].As<Napi::Function>());
+    std::vector<int> in_axes, out_axes;
+    if (info.Length() > 1 && info[1].IsArray()) {
+      auto jsArr = info[1].As<Napi::Array>();
+      for (uint32_t i = 0; i < jsArr.Length(); i++)
+        in_axes.push_back(jsArr.Get(i).As<Napi::Number>().Int32Value());
+    }
+    if (info.Length() > 2 && info[2].IsArray()) {
+      auto jsArr = info[2].As<Napi::Array>();
+      for (uint32_t i = 0; i < jsArr.Length(); i++)
+        out_axes.push_back(jsArr.Get(i).As<Napi::Number>().Int32Value());
+    }
+    auto vmapFn = mlx::core::vmap(multiFn, in_axes, out_axes);
+    return MakeTransformFn(env, new ArrayFnData{std::move(vmapFn)}, "vmap");
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+}
+
+// compile(fn, shapeless?) -> fn
+Napi::Value CompileOp(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1 || !info[0].IsFunction()) {
+    Napi::TypeError::New(env, "compile requires a function argument").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  try {
+    auto multiFn = WrapJsFn(info[0].As<Napi::Function>());
+    bool shapeless = false;
+    if (info.Length() > 1 && info[1].IsBoolean())
+      shapeless = info[1].As<Napi::Boolean>().Value();
+    auto compiledFn = mlx::core::compile(multiFn, shapeless);
+    return MakeTransformFn(env, new ArrayFnData{std::move(compiledFn)}, "compiled");
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+}
+
+// checkpoint(fn) -> fn
+Napi::Value CheckpointOp(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1 || !info[0].IsFunction()) {
+    Napi::TypeError::New(env, "checkpoint requires a function argument").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  try {
+    auto multiFn = WrapJsFn(info[0].As<Napi::Function>());
+    auto cpFn = mlx::core::checkpoint(std::move(multiFn));
+    return MakeTransformFn(env, new ArrayFnData{std::move(cpFn)}, "checkpointed");
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+}
+
+// ============================================================
 // Eval ops (mlx::core::eval / async_eval)
 // ============================================================
 
@@ -8324,6 +8672,17 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   // Eval operations
   core.Set("eval", Napi::Function::New(env, Eval, "eval", &data));
   core.Set("async_eval", Napi::Function::New(env, AsyncEval, "async_eval", &data));
+
+  // Transform operations
+  core.Set("grad", Napi::Function::New(env, GradOp, "grad", &data));
+  core.Set("value_and_grad", Napi::Function::New(env, ValueAndGradOp, "value_and_grad", &data));
+  core.Set("vjp", Napi::Function::New(env, VjpOp, "vjp", &data));
+  core.Set("jvp", Napi::Function::New(env, JvpOp, "jvp", &data));
+  core.Set("vmap", Napi::Function::New(env, VmapOp, "vmap", &data));
+  core.Set("compile", Napi::Function::New(env, CompileOp, "compile", &data));
+  core.Set("enable_compile", Napi::Function::New(env, EnableCompile, "enable_compile", &data));
+  core.Set("disable_compile", Napi::Function::New(env, DisableCompile, "disable_compile", &data));
+  core.Set("checkpoint", Napi::Function::New(env, CheckpointOp, "checkpoint", &data));
 
   // IO operations
   core.Set("load", Napi::Function::New(env, Load, "load", &data));
