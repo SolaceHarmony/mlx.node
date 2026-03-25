@@ -302,6 +302,8 @@ import {
   enable_compile,
   disable_compile,
   checkpoint,
+  export_function,
+  export_to_dot,
   type NanToNumOptions,
   type CloseOptions,
   type ContiguousOptions,
@@ -556,6 +558,8 @@ export {
   enable_compile,
   disable_compile,
   checkpoint,
+  export_function,
+  export_to_dot,
 };
 export type {
   SplitOptions, PadOptions, SliceOptions, AsStridedOptions, NumberOfElementsOptions,
@@ -835,6 +839,8 @@ const core = {
   enable_compile,
   disable_compile,
   checkpoint,
+  export_function,
+  export_to_dot,
   device: deviceModule,
   Dtype,
   dtype: dtypeModule,

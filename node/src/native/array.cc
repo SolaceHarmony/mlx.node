@@ -3,6 +3,7 @@
 #include <memory>
 #include <numeric>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -25,6 +26,7 @@
 #include "mlx/memory.h"
 #include "mlx/device.h"
 #include "mlx/einsum.h"
+#include "mlx/graph_utils.h"
 #include "mlx_bridge.h"
 
 #include "dtype.h"
@@ -8352,6 +8354,69 @@ Napi::Value SaveGguf(const Napi::CallbackInfo& info) {
   return env.Undefined();
 }
 
+// ============================================================
+// Export ops
+// ============================================================
+
+// export_function(file, fn, args, shapeless?)
+Napi::Value ExportFunction(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 3 || !info[0].IsString() || !info[1].IsFunction()) {
+    Napi::TypeError::New(env, "export_function requires (file: string, fn: Function, args: MLXArray[])")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  std::string file = info[0].As<Napi::String>().Utf8Value();
+  auto multiFn = WrapJsFn(info[1].As<Napi::Function>());
+  // Parse args array
+  std::vector<mlx::core::array> args;
+  if (info[2].IsArray()) {
+    auto jsArr = info[2].As<Napi::Array>();
+    for (uint32_t i = 0; i < jsArr.Length(); i++) {
+      args.push_back(ToArray(env, jsArr.Get(i)));
+      if (env.IsExceptionPending()) return env.Null();
+    }
+  } else {
+    args.push_back(ToArray(env, info[2]));
+    if (env.IsExceptionPending()) return env.Null();
+  }
+  bool shapeless = false;
+  if (info.Length() > 3 && info[3].IsBoolean())
+    shapeless = info[3].As<Napi::Boolean>().Value();
+  try {
+    mlx::core::export_function(file, multiFn, args, shapeless);
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+  }
+  return env.Undefined();
+}
+
+// export_to_dot(arrays) -> string (DOT format)
+Napi::Value ExportToDot(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  std::vector<mlx::core::array> outputs;
+  for (size_t i = 0; i < info.Length(); i++) {
+    if (info[i].IsArray()) {
+      auto jsArr = info[i].As<Napi::Array>();
+      for (uint32_t j = 0; j < jsArr.Length(); j++) {
+        outputs.push_back(ToArray(env, jsArr.Get(j)));
+        if (env.IsExceptionPending()) return env.Null();
+      }
+    } else {
+      outputs.push_back(ToArray(env, info[i]));
+      if (env.IsExceptionPending()) return env.Null();
+    }
+  }
+  try {
+    std::ostringstream oss;
+    mlx::core::export_to_dot(oss, outputs);
+    return Napi::String::New(env, oss.str());
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+}
+
 } // namespace
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -8668,6 +8733,8 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
 
   // Export/import operations
   core.Set("import_function", Napi::Function::New(env, ImportFunction, "import_function", &data));
+  core.Set("export_function", Napi::Function::New(env, ExportFunction, "export_function", &data));
+  core.Set("export_to_dot", Napi::Function::New(env, ExportToDot, "export_to_dot", &data));
 
   // Eval operations
   core.Set("eval", Napi::Function::New(env, Eval, "eval", &data));
