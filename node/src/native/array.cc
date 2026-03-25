@@ -7784,6 +7784,226 @@ Napi::Value LinalgCross(const Napi::CallbackInfo& info) {
   return WrapArray(env, std::make_shared<mlx::core::array>(mlx::core::linalg::cross(a, b, axis, s)));
 }
 
+// ============================================================
+// Eval ops (mlx::core::eval / async_eval)
+// ============================================================
+
+Napi::Value Eval(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  std::vector<mlx::core::array> arrays;
+  for (size_t i = 0; i < info.Length(); i++) {
+    if (info[i].IsArray()) {
+      auto jsArr = info[i].As<Napi::Array>();
+      for (uint32_t j = 0; j < jsArr.Length(); j++) {
+        arrays.push_back(ToArray(env, jsArr.Get(j)));
+        if (env.IsExceptionPending()) return env.Null();
+      }
+    } else {
+      arrays.push_back(ToArray(env, info[i]));
+      if (env.IsExceptionPending()) return env.Null();
+    }
+  }
+  try {
+    mlx::core::eval(std::move(arrays));
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+  }
+  return env.Undefined();
+}
+
+Napi::Value AsyncEval(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  std::vector<mlx::core::array> arrays;
+  for (size_t i = 0; i < info.Length(); i++) {
+    if (info[i].IsArray()) {
+      auto jsArr = info[i].As<Napi::Array>();
+      for (uint32_t j = 0; j < jsArr.Length(); j++) {
+        arrays.push_back(ToArray(env, jsArr.Get(j)));
+        if (env.IsExceptionPending()) return env.Null();
+      }
+    } else {
+      arrays.push_back(ToArray(env, info[i]));
+      if (env.IsExceptionPending()) return env.Null();
+    }
+  }
+  try {
+    mlx::core::async_eval(std::move(arrays));
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+  }
+  return env.Undefined();
+}
+
+// ============================================================
+// IO ops (mlx::core::load / save / safetensors / gguf)
+// ============================================================
+
+// Helper: convert JS object {key: MLXArray} to C++ unordered_map
+static std::unordered_map<std::string, mlx::core::array> JsObjectToArrayMap(
+    Napi::Env env, Napi::Value val) {
+  std::unordered_map<std::string, mlx::core::array> result;
+  if (!val.IsObject()) {
+    Napi::TypeError::New(env, "Expected object with string keys and array values")
+        .ThrowAsJavaScriptException();
+    return result;
+  }
+  auto obj = val.As<Napi::Object>();
+  auto names = obj.GetPropertyNames();
+  for (uint32_t i = 0; i < names.Length(); i++) {
+    auto key = names.Get(i).As<Napi::String>().Utf8Value();
+    auto arr = ToArray(env, obj.Get(key));
+    if (env.IsExceptionPending()) return result;
+    result.insert_or_assign(key, std::move(arr));
+  }
+  return result;
+}
+
+// Helper: convert C++ unordered_map to JS object {key: MLXArray}
+static Napi::Object ArrayMapToJsObject(
+    Napi::Env env,
+    const std::unordered_map<std::string, mlx::core::array>& map) {
+  auto obj = Napi::Object::New(env);
+  for (auto& [key, arr] : map) {
+    obj.Set(key, WrapArray(env, std::make_shared<mlx::core::array>(arr)));
+  }
+  return obj;
+}
+
+// Helper: convert C++ string map to JS object
+static Napi::Object StringMapToJsObject(
+    Napi::Env env,
+    const std::unordered_map<std::string, std::string>& map) {
+  auto obj = Napi::Object::New(env);
+  for (auto& [key, val] : map) {
+    obj.Set(key, Napi::String::New(env, val));
+  }
+  return obj;
+}
+
+// load(file: string, options?: {stream?}) -> MLXArray | {arrays, metadata}
+// MLX auto-detects format from extension (.npy, .npz, .safetensors, .gguf)
+Napi::Value Load(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1 || !info[0].IsString()) {
+    Napi::TypeError::New(env, "load requires a file path string").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  std::string file = info[0].As<Napi::String>().Utf8Value();
+  auto s = GetStreamArgument(info, 1);
+  if (env.IsExceptionPending()) return env.Null();
+
+  try {
+    // Check extension to determine format
+    std::string ext;
+    auto dot = file.rfind('.');
+    if (dot != std::string::npos) ext = file.substr(dot);
+
+    if (ext == ".safetensors") {
+      auto loaded = mlx::core::load_safetensors(file, s);
+      auto result = Napi::Object::New(env);
+      result.Set("arrays", ArrayMapToJsObject(env, loaded.first));
+      result.Set("metadata", StringMapToJsObject(env, loaded.second));
+      return result;
+    } else if (ext == ".gguf") {
+      auto loaded = mlx::core::load_gguf(file, s);
+      auto result = Napi::Object::New(env);
+      result.Set("arrays", ArrayMapToJsObject(env, loaded.first));
+      // Convert GGUFMetaData variant to JS
+      auto metaObj = Napi::Object::New(env);
+      for (const auto& kv : loaded.second) {
+        if (std::holds_alternative<std::string>(kv.second)) {
+          metaObj.Set(kv.first, Napi::String::New(env, std::get<std::string>(kv.second)));
+        } else if (std::holds_alternative<mlx::core::array>(kv.second)) {
+          metaObj.Set(kv.first, WrapArray(env, std::make_shared<mlx::core::array>(std::get<mlx::core::array>(kv.second))));
+        } else if (std::holds_alternative<std::vector<std::string>>(kv.second)) {
+          const auto& vec = std::get<std::vector<std::string>>(kv.second);
+          auto jsArr = Napi::Array::New(env, vec.size());
+          for (size_t i = 0; i < vec.size(); i++) {
+            jsArr.Set(i, Napi::String::New(env, vec[i]));
+          }
+          metaObj.Set(kv.first, jsArr);
+        }
+        // monostate: skip
+      }
+      result.Set("metadata", metaObj);
+      return result;
+    } else {
+      // .npy or other single-array format
+      auto arr = mlx::core::load(file, s);
+      return WrapArray(env, std::make_shared<mlx::core::array>(arr));
+    }
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+}
+
+// save(file: string, arr: MLXArray)
+Napi::Value Save(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 2 || !info[0].IsString()) {
+    Napi::TypeError::New(env, "save requires (file: string, array: MLXArray)").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  std::string file = info[0].As<Napi::String>().Utf8Value();
+  auto arr = ToArray(env, info[1]);
+  if (env.IsExceptionPending()) return env.Null();
+  try {
+    mlx::core::save(file, arr);
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+  }
+  return env.Undefined();
+}
+
+// save_safetensors(file: string, arrays: {[key: string]: MLXArray}, metadata?: {[key: string]: string})
+Napi::Value SaveSafetensors(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 2 || !info[0].IsString()) {
+    Napi::TypeError::New(env, "save_safetensors requires (file: string, arrays: object)").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  std::string file = info[0].As<Napi::String>().Utf8Value();
+  auto arrays = JsObjectToArrayMap(env, info[1]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  std::unordered_map<std::string, std::string> metadata;
+  if (info.Length() > 2 && info[2].IsObject()) {
+    auto metaObj = info[2].As<Napi::Object>();
+    auto names = metaObj.GetPropertyNames();
+    for (uint32_t i = 0; i < names.Length(); i++) {
+      auto key = names.Get(i).As<Napi::String>().Utf8Value();
+      metadata[key] = metaObj.Get(key).As<Napi::String>().Utf8Value();
+    }
+  }
+
+  try {
+    mlx::core::save_safetensors(file, arrays, metadata);
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+  }
+  return env.Undefined();
+}
+
+// save_gguf(file: string, arrays: {[key: string]: MLXArray})
+Napi::Value SaveGguf(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 2 || !info[0].IsString()) {
+    Napi::TypeError::New(env, "save_gguf requires (file: string, arrays: object)").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  std::string file = info[0].As<Napi::String>().Utf8Value();
+  auto arrays = JsObjectToArrayMap(env, info[1]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  try {
+    mlx::core::save_gguf(file, arrays);
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+  }
+  return env.Undefined();
+}
+
 } // namespace
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -8100,6 +8320,16 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
 
   // Export/import operations
   core.Set("import_function", Napi::Function::New(env, ImportFunction, "import_function", &data));
+
+  // Eval operations
+  core.Set("eval", Napi::Function::New(env, Eval, "eval", &data));
+  core.Set("async_eval", Napi::Function::New(env, AsyncEval, "async_eval", &data));
+
+  // IO operations
+  core.Set("load", Napi::Function::New(env, Load, "load", &data));
+  core.Set("save", Napi::Function::New(env, Save, "save", &data));
+  core.Set("save_safetensors", Napi::Function::New(env, SaveSafetensors, "save_safetensors", &data));
+  core.Set("save_gguf", Napi::Function::New(env, SaveGguf, "save_gguf", &data));
 
   mlx.Set("core", core);
   mlx.Set("nn_init", nn_init);

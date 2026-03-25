@@ -2993,3 +2993,100 @@ export function einsum_path(subscripts: string, ...operands: MLXArray[]): [strin
   return [path, subscripts];
 }
 
+// ============================================================
+// Eval ops
+// ============================================================
+
+/** Evaluate one or more arrays, forcing lazy computation */
+export function eval_op(...args: (MLXArray | MLXArray[])[]): void {
+  const natives: any[] = [];
+  for (const arg of args) {
+    if (Array.isArray(arg)) {
+      for (const a of arg) natives.push(toNativeHandle(a));
+    } else {
+      natives.push(toNativeHandle(arg));
+    }
+  }
+  addon.eval(...natives);
+}
+
+/** Asynchronously evaluate one or more arrays */
+export function async_eval(...args: (MLXArray | MLXArray[])[]): void {
+  const natives: any[] = [];
+  for (const arg of args) {
+    if (Array.isArray(arg)) {
+      for (const a of arg) natives.push(toNativeHandle(a));
+    } else {
+      natives.push(toNativeHandle(arg));
+    }
+  }
+  addon.async_eval(...natives);
+}
+
+// ============================================================
+// IO ops
+// ============================================================
+
+export interface SaveSafetensorsOptions {
+  metadata?: Record<string, string>;
+}
+
+export interface LoadResult {
+  arrays: Record<string, MLXArray>;
+  metadata: Record<string, any>;
+}
+
+/** Load an array or dict of arrays from a file (.npy, .npz, .safetensors, .gguf) */
+export function load(file: string, options?: StreamOptions): MLXArray | LoadResult {
+  const args: any[] = [file];
+  if (options?.stream) args.push(normalizeStream(options.stream));
+  const result = addon.load(...args);
+  // Single array (npy format)
+  if (result && typeof result === 'object' && result.constructor && result.constructor.name !== 'Object') {
+    return MLXArray.fromHandle(result);
+  }
+  // Dict format (safetensors, gguf) — result is {arrays: {}, metadata: {}}
+  if (result && result.arrays) {
+    const arrays: Record<string, MLXArray> = {};
+    for (const [key, val] of Object.entries(result.arrays)) {
+      arrays[key] = MLXArray.fromHandle(val as any);
+    }
+    return { arrays, metadata: result.metadata || {} };
+  }
+  return MLXArray.fromHandle(result);
+}
+
+/** Save a single array to a .npy file */
+export function save(file: string, arr: MLXArray): void {
+  addon.save(file, toNativeHandle(arr));
+}
+
+/** Save arrays to a .safetensors file */
+export function save_safetensors(
+  file: string,
+  arrays: Record<string, MLXArray>,
+  options?: SaveSafetensorsOptions,
+): void {
+  const nativeArrays: Record<string, any> = {};
+  for (const [key, val] of Object.entries(arrays)) {
+    nativeArrays[key] = toNativeHandle(val);
+  }
+  const args: any[] = [file, nativeArrays];
+  if (options?.metadata) {
+    args.push(options.metadata);
+  }
+  addon.save_safetensors(...args);
+}
+
+/** Save arrays to a .gguf file */
+export function save_gguf(
+  file: string,
+  arrays: Record<string, MLXArray>,
+): void {
+  const nativeArrays: Record<string, any> = {};
+  for (const [key, val] of Object.entries(arrays)) {
+    nativeArrays[key] = toNativeHandle(val);
+  }
+  addon.save_gguf(file, nativeArrays);
+}
+
