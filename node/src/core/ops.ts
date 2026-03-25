@@ -3246,3 +3246,30 @@ export function checkpoint(fn: MultiArrayFn): (...args: MLXArray[]) => MLXArray 
   };
 }
 
+// ============================================================
+// Export ops
+// ============================================================
+
+/** Export a function trace to a file for later import */
+export function export_function(
+  file: string,
+  fn: MultiArrayFn,
+  args: MLXArray[],
+  shapeless?: boolean,
+): void {
+  const nativeFn = (...nativeArgs: any[]) => {
+    const jsArgs = nativeArgs.map((a: any) => MLXArray.fromHandle(a));
+    const result = fn(...jsArgs);
+    if (Array.isArray(result)) return result.map(toNativeHandle);
+    return toNativeHandle(result);
+  };
+  const nativeArgs = args.map(toNativeHandle);
+  addon.export_function(file, nativeFn, nativeArgs, shapeless);
+}
+
+/** Export a computation graph to DOT format (Graphviz) */
+export function export_to_dot(...arrays: MLXArray[]): string {
+  const nativeArrays = arrays.map(toNativeHandle);
+  return addon.export_to_dot(...nativeArrays);
+}
+

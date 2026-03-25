@@ -243,6 +243,8 @@ export const {
   enable_compile,
   disable_compile,
   checkpoint,
+  export_function,
+  export_to_dot,
   // DType constants
   bool,
   int8,
