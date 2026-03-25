@@ -1730,6 +1730,135 @@ export namespace linalg {
     const handle = addon.linalg.norm(...args);
     return MLXArray.fromHandle(handle);
   }
+
+  export function inv(a: MLXArray, options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.linalg.inv(...args));
+  }
+
+  export function pinv(a: MLXArray, options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.linalg.pinv(...args));
+  }
+
+  export function solve(a: MLXArray, b: MLXArray, options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a), toNativeHandle(b)];
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.linalg.solve(...args));
+  }
+
+  export interface SolveTriangularOptions extends StreamOptions {
+    upper?: boolean;
+  }
+
+  export function solve_triangular(a: MLXArray, b: MLXArray, options?: SolveTriangularOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a), toNativeHandle(b)];
+    if (options?.upper !== undefined) args.push(options.upper);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.linalg.solve_triangular(...args));
+  }
+
+  export interface CholeskyOptions extends StreamOptions {
+    upper?: boolean;
+  }
+
+  export function cholesky(a: MLXArray, options?: CholeskyOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (options?.upper !== undefined) args.push(options.upper);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.linalg.cholesky(...args));
+  }
+
+  export function cholesky_inv(a: MLXArray, options?: CholeskyOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (options?.upper !== undefined) args.push(options.upper);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.linalg.cholesky_inv(...args));
+  }
+
+  export interface TriInvOptions extends StreamOptions {
+    upper?: boolean;
+  }
+
+  export function tri_inv(a: MLXArray, options?: TriInvOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (options?.upper !== undefined) args.push(options.upper);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.linalg.tri_inv(...args));
+  }
+
+  export function svd(a: MLXArray, options?: StreamOptions): [MLXArray, MLXArray, MLXArray] {
+    const args: any[] = [toNativeHandle(a)];
+    appendStreamArg(args, options?.stream);
+    const result = addon.linalg.svd(...args);
+    return [MLXArray.fromHandle(result[0]), MLXArray.fromHandle(result[1]), MLXArray.fromHandle(result[2])];
+  }
+
+  export function qr(a: MLXArray, options?: StreamOptions): [MLXArray, MLXArray] {
+    const args: any[] = [toNativeHandle(a)];
+    appendStreamArg(args, options?.stream);
+    const result = addon.linalg.qr(...args);
+    return [MLXArray.fromHandle(result[0]), MLXArray.fromHandle(result[1])];
+  }
+
+  export function lu(a: MLXArray, options?: StreamOptions): [MLXArray, MLXArray, MLXArray] {
+    const args: any[] = [toNativeHandle(a)];
+    appendStreamArg(args, options?.stream);
+    const result = addon.linalg.lu(...args);
+    return [MLXArray.fromHandle(result[0]), MLXArray.fromHandle(result[1]), MLXArray.fromHandle(result[2])];
+  }
+
+  export function lu_factor(a: MLXArray, options?: StreamOptions): [MLXArray, MLXArray] {
+    const args: any[] = [toNativeHandle(a)];
+    appendStreamArg(args, options?.stream);
+    const result = addon.linalg.lu_factor(...args);
+    return [MLXArray.fromHandle(result[0]), MLXArray.fromHandle(result[1])];
+  }
+
+  export function eig(a: MLXArray, options?: StreamOptions): [MLXArray, MLXArray] {
+    const args: any[] = [toNativeHandle(a)];
+    appendStreamArg(args, options?.stream);
+    const result = addon.linalg.eig(...args);
+    return [MLXArray.fromHandle(result[0]), MLXArray.fromHandle(result[1])];
+  }
+
+  export function eigvals(a: MLXArray, options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.linalg.eigvals(...args));
+  }
+
+  export interface EighOptions extends StreamOptions {
+    UPLO?: 'L' | 'U';
+  }
+
+  export function eigh(a: MLXArray, options?: EighOptions): [MLXArray, MLXArray] {
+    const args: any[] = [toNativeHandle(a)];
+    if (options?.UPLO !== undefined) args.push(options.UPLO);
+    appendStreamArg(args, options?.stream);
+    const result = addon.linalg.eigh(...args);
+    return [MLXArray.fromHandle(result[0]), MLXArray.fromHandle(result[1])];
+  }
+
+  export function eigvalsh(a: MLXArray, options?: EighOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a)];
+    if (options?.UPLO !== undefined) args.push(options.UPLO);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.linalg.eigvalsh(...args));
+  }
+
+  export interface CrossOptions extends StreamOptions {
+    axis?: number;
+  }
+
+  export function cross(a: MLXArray, b: MLXArray, options?: CrossOptions): MLXArray {
+    const args: any[] = [toNativeHandle(a), toNativeHandle(b)];
+    if (options?.axis !== undefined) args.push(options.axis);
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.linalg.cross(...args));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2798,5 +2927,69 @@ export function divmod(a: MLXArray, b: MLXArray, options?: StreamOptions): [MLXA
 /** Alias for transpose */
 export function permute_dims(a: MLXArray, axes?: readonly number[], options?: StreamOptions): MLXArray {
   return transpose(a, axes, options);
+}
+
+/** Truncate to integer toward zero: sign(x) * floor(abs(x)) */
+export function trunc(a: MLXArray, options?: StreamOptions): MLXArray {
+  const absA = abs(a, options);
+  const floored = floor(absA, options);
+  return multiply(sign(a, options), floored, options);
+}
+
+/** Compute the broadcast shape of the given shapes (pure TS utility) */
+export function broadcast_shapes(...shapes: readonly (readonly number[])[]): number[] {
+  if (shapes.length === 0) return [];
+  const maxNdim = Math.max(...shapes.map(s => s.length));
+  const result: number[] = new Array(maxNdim).fill(1);
+  for (const shape of shapes) {
+    const offset = maxNdim - shape.length;
+    for (let i = 0; i < shape.length; i++) {
+      const dim = shape[i];
+      const ri = i + offset;
+      if (result[ri] === 1) {
+        result[ri] = dim;
+      } else if (dim !== 1 && dim !== result[ri]) {
+        throw new Error(`Shape mismatch: cannot broadcast dimension ${dim} with ${result[ri]}`);
+      }
+    }
+  }
+  return result;
+}
+
+/** Discrete, linear convolution of two 1D arrays.
+ *  Uses conv1d internally with proper flip and padding for 'full' mode. */
+export function convolve(a: MLXArray, v: MLXArray, mode: 'full' | 'valid' | 'same' = 'full', options?: StreamOptions): MLXArray {
+  const aLen = a.shape[0];
+  const vLen = v.shape[0];
+  // Flip v for convolution (conv1d does cross-correlation)
+  const vFlipped = slice(v, [0], [vLen], [-1]);
+  // conv1d expects [batch, length, channels_in] input and [channels_out, kW, channels_in] weight
+  const input3d = reshape(a, [1, aLen, 1]);
+  const kernel3d = reshape(vFlipped, [1, vLen, 1]);
+  if (mode === 'full') {
+    const padded = pad(input3d, [[0, 0], [vLen - 1, vLen - 1], [0, 0]]);
+    const result = conv1d(padded, kernel3d, options);
+    return reshape(result, [aLen + vLen - 1]);
+  } else if (mode === 'valid') {
+    const result = conv1d(input3d, kernel3d, options);
+    return flatten(result);
+  } else {
+    // 'same': output same length as a
+    const padTotal = vLen - 1;
+    const padLeft = Math.floor(padTotal / 2);
+    const padded = pad(input3d, [[0, 0], [padLeft, padTotal - padLeft], [0, 0]]);
+    const result = conv1d(padded, kernel3d, options);
+    return reshape(result, [aLen]);
+  }
+}
+
+/** Return a list of index pairs for optimal einsum contraction order */
+export function einsum_path(subscripts: string, ...operands: MLXArray[]): [string[][], string] {
+  // Simple greedy path: contract pairs left to right
+  const path: string[][] = [];
+  for (let i = 0; i < operands.length - 1; i++) {
+    path.push([String(i === 0 ? 0 : 0), String(i === 0 ? 1 : 1)]);
+  }
+  return [path, subscripts];
 }
 

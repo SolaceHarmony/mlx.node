@@ -222,6 +222,10 @@ export const {
   concat,
   divmod,
   permute_dims,
+  trunc,
+  broadcast_shapes,
+  convolve,
+  einsum_path,
   // DType constants
   bool,
   int8,

@@ -7620,6 +7620,170 @@ Napi::Value GatherQMM(const Napi::CallbackInfo& info) {
       mlx::core::gather_qmm(x, w, scales, biases, lhs_indices, rhs_indices, transpose, group_size, bits, mode, sorted_indices, streamArg)));
 }
 
+// ---------------------------------------------------------------------------
+// Linalg ops (mlx::core::linalg::*)
+// CPU-only: default to CPU device when no stream specified
+// ---------------------------------------------------------------------------
+static mlx::core::StreamOrDevice LinalgStreamDefault(const Napi::CallbackInfo& info, size_t index) {
+  if (info.Length() <= index) {
+    return mlx::core::Device::cpu;
+  }
+  return ParseStreamOrDeviceValue(info.Env(), info[index]);
+}
+
+Napi::Value LinalgInv(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto a = ToArray(env, info[0]); if (env.IsExceptionPending()) return env.Null();
+  auto s = LinalgStreamDefault(info, 1); if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env, std::make_shared<mlx::core::array>(mlx::core::linalg::inv(a, s)));
+}
+
+Napi::Value LinalgPinv(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto a = ToArray(env, info[0]); if (env.IsExceptionPending()) return env.Null();
+  auto s = LinalgStreamDefault(info, 1); if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env, std::make_shared<mlx::core::array>(mlx::core::linalg::pinv(a, s)));
+}
+
+Napi::Value LinalgSolve(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto a = ToArray(env, info[0]); if (env.IsExceptionPending()) return env.Null();
+  auto b = ToArray(env, info[1]); if (env.IsExceptionPending()) return env.Null();
+  auto s = LinalgStreamDefault(info, 2); if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env, std::make_shared<mlx::core::array>(mlx::core::linalg::solve(a, b, s)));
+}
+
+Napi::Value LinalgSolveTriangular(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto a = ToArray(env, info[0]); if (env.IsExceptionPending()) return env.Null();
+  auto b = ToArray(env, info[1]); if (env.IsExceptionPending()) return env.Null();
+  bool upper = false; size_t ni = 2;
+  if (info.Length() > ni && info[ni].IsBoolean()) { upper = info[ni].As<Napi::Boolean>().Value(); ni++; }
+  auto s = LinalgStreamDefault(info, ni); if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env, std::make_shared<mlx::core::array>(mlx::core::linalg::solve_triangular(a, b, upper, s)));
+}
+
+Napi::Value LinalgCholesky(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto a = ToArray(env, info[0]); if (env.IsExceptionPending()) return env.Null();
+  bool upper = false; size_t ni = 1;
+  if (info.Length() > ni && info[ni].IsBoolean()) { upper = info[ni].As<Napi::Boolean>().Value(); ni++; }
+  auto s = LinalgStreamDefault(info, ni); if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env, std::make_shared<mlx::core::array>(mlx::core::linalg::cholesky(a, upper, s)));
+}
+
+Napi::Value LinalgCholeskyInv(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto a = ToArray(env, info[0]); if (env.IsExceptionPending()) return env.Null();
+  bool upper = false; size_t ni = 1;
+  if (info.Length() > ni && info[ni].IsBoolean()) { upper = info[ni].As<Napi::Boolean>().Value(); ni++; }
+  auto s = LinalgStreamDefault(info, ni); if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env, std::make_shared<mlx::core::array>(mlx::core::linalg::cholesky_inv(a, upper, s)));
+}
+
+Napi::Value LinalgTriInv(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto a = ToArray(env, info[0]); if (env.IsExceptionPending()) return env.Null();
+  bool upper = false; size_t ni = 1;
+  if (info.Length() > ni && info[ni].IsBoolean()) { upper = info[ni].As<Napi::Boolean>().Value(); ni++; }
+  auto s = LinalgStreamDefault(info, ni); if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env, std::make_shared<mlx::core::array>(mlx::core::linalg::tri_inv(a, upper, s)));
+}
+
+Napi::Value LinalgSvd(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto a = ToArray(env, info[0]); if (env.IsExceptionPending()) return env.Null();
+  auto s = LinalgStreamDefault(info, 1); if (env.IsExceptionPending()) return env.Null();
+  auto result = mlx::core::linalg::svd(a, s);
+  auto js = Napi::Array::New(env, result.size());
+  for (size_t i = 0; i < result.size(); i++)
+    js.Set(i, WrapArray(env, std::make_shared<mlx::core::array>(std::move(result[i]))));
+  return js;
+}
+
+Napi::Value LinalgQr(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto a = ToArray(env, info[0]); if (env.IsExceptionPending()) return env.Null();
+  auto s = LinalgStreamDefault(info, 1); if (env.IsExceptionPending()) return env.Null();
+  auto [Q, R] = mlx::core::linalg::qr(a, s);
+  auto js = Napi::Array::New(env, 2);
+  js.Set((uint32_t)0, WrapArray(env, std::make_shared<mlx::core::array>(std::move(Q))));
+  js.Set((uint32_t)1, WrapArray(env, std::make_shared<mlx::core::array>(std::move(R))));
+  return js;
+}
+
+Napi::Value LinalgLu(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto a = ToArray(env, info[0]); if (env.IsExceptionPending()) return env.Null();
+  auto s = LinalgStreamDefault(info, 1); if (env.IsExceptionPending()) return env.Null();
+  auto result = mlx::core::linalg::lu(a, s);
+  auto js = Napi::Array::New(env, result.size());
+  for (size_t i = 0; i < result.size(); i++)
+    js.Set(i, WrapArray(env, std::make_shared<mlx::core::array>(std::move(result[i]))));
+  return js;
+}
+
+Napi::Value LinalgLuFactor(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto a = ToArray(env, info[0]); if (env.IsExceptionPending()) return env.Null();
+  auto s = LinalgStreamDefault(info, 1); if (env.IsExceptionPending()) return env.Null();
+  auto [lu, pivots] = mlx::core::linalg::lu_factor(a, s);
+  auto js = Napi::Array::New(env, 2);
+  js.Set((uint32_t)0, WrapArray(env, std::make_shared<mlx::core::array>(std::move(lu))));
+  js.Set((uint32_t)1, WrapArray(env, std::make_shared<mlx::core::array>(std::move(pivots))));
+  return js;
+}
+
+Napi::Value LinalgEig(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto a = ToArray(env, info[0]); if (env.IsExceptionPending()) return env.Null();
+  auto s = LinalgStreamDefault(info, 1); if (env.IsExceptionPending()) return env.Null();
+  auto [vals, vecs] = mlx::core::linalg::eig(a, s);
+  auto js = Napi::Array::New(env, 2);
+  js.Set((uint32_t)0, WrapArray(env, std::make_shared<mlx::core::array>(std::move(vals))));
+  js.Set((uint32_t)1, WrapArray(env, std::make_shared<mlx::core::array>(std::move(vecs))));
+  return js;
+}
+
+Napi::Value LinalgEigvals(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto a = ToArray(env, info[0]); if (env.IsExceptionPending()) return env.Null();
+  auto s = LinalgStreamDefault(info, 1); if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env, std::make_shared<mlx::core::array>(mlx::core::linalg::eigvals(a, s)));
+}
+
+Napi::Value LinalgEigh(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto a = ToArray(env, info[0]); if (env.IsExceptionPending()) return env.Null();
+  std::string UPLO = "L"; size_t ni = 1;
+  if (info.Length() > ni && info[ni].IsString()) { UPLO = info[ni].As<Napi::String>().Utf8Value(); ni++; }
+  auto s = LinalgStreamDefault(info, ni); if (env.IsExceptionPending()) return env.Null();
+  auto [vals, vecs] = mlx::core::linalg::eigh(a, UPLO, s);
+  auto js = Napi::Array::New(env, 2);
+  js.Set((uint32_t)0, WrapArray(env, std::make_shared<mlx::core::array>(std::move(vals))));
+  js.Set((uint32_t)1, WrapArray(env, std::make_shared<mlx::core::array>(std::move(vecs))));
+  return js;
+}
+
+Napi::Value LinalgEigvalsh(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto a = ToArray(env, info[0]); if (env.IsExceptionPending()) return env.Null();
+  std::string UPLO = "L"; size_t ni = 1;
+  if (info.Length() > ni && info[ni].IsString()) { UPLO = info[ni].As<Napi::String>().Utf8Value(); ni++; }
+  auto s = LinalgStreamDefault(info, ni); if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env, std::make_shared<mlx::core::array>(mlx::core::linalg::eigvalsh(a, UPLO, s)));
+}
+
+Napi::Value LinalgCross(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto a = ToArray(env, info[0]); if (env.IsExceptionPending()) return env.Null();
+  auto b = ToArray(env, info[1]); if (env.IsExceptionPending()) return env.Null();
+  int axis = -1; size_t ni = 2;
+  if (info.Length() > ni && info[ni].IsNumber()) { axis = info[ni].As<Napi::Number>().Int32Value(); ni++; }
+  auto s = LinalgStreamDefault(info, ni); if (env.IsExceptionPending()) return env.Null();
+  return WrapArray(env, std::make_shared<mlx::core::array>(mlx::core::linalg::cross(a, b, axis, s)));
+}
+
 } // namespace
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -7878,6 +8042,22 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   // Linear algebra operations under core.linalg (matches mlx.core.linalg.*)
   Napi::Object linalg = Napi::Object::New(env);
   linalg.Set("norm", Napi::Function::New(env, Norm, "norm", &data));
+  linalg.Set("inv", Napi::Function::New(env, LinalgInv, "inv", &data));
+  linalg.Set("pinv", Napi::Function::New(env, LinalgPinv, "pinv", &data));
+  linalg.Set("solve", Napi::Function::New(env, LinalgSolve, "solve", &data));
+  linalg.Set("solve_triangular", Napi::Function::New(env, LinalgSolveTriangular, "solve_triangular", &data));
+  linalg.Set("cholesky", Napi::Function::New(env, LinalgCholesky, "cholesky", &data));
+  linalg.Set("cholesky_inv", Napi::Function::New(env, LinalgCholeskyInv, "cholesky_inv", &data));
+  linalg.Set("tri_inv", Napi::Function::New(env, LinalgTriInv, "tri_inv", &data));
+  linalg.Set("svd", Napi::Function::New(env, LinalgSvd, "svd", &data));
+  linalg.Set("qr", Napi::Function::New(env, LinalgQr, "qr", &data));
+  linalg.Set("lu", Napi::Function::New(env, LinalgLu, "lu", &data));
+  linalg.Set("lu_factor", Napi::Function::New(env, LinalgLuFactor, "lu_factor", &data));
+  linalg.Set("eig", Napi::Function::New(env, LinalgEig, "eig", &data));
+  linalg.Set("eigvals", Napi::Function::New(env, LinalgEigvals, "eigvals", &data));
+  linalg.Set("eigh", Napi::Function::New(env, LinalgEigh, "eigh", &data));
+  linalg.Set("eigvalsh", Napi::Function::New(env, LinalgEigvalsh, "eigvalsh", &data));
+  linalg.Set("cross", Napi::Function::New(env, LinalgCross, "cross", &data));
   core.Set("linalg", linalg);
 
   // Device management
