@@ -226,6 +226,13 @@ export const {
   broadcast_shapes,
   convolve,
   einsum_path,
+  // Batch 5: eval + IO
+  eval: eval_op,
+  async_eval,
+  load,
+  save,
+  save_safetensors,
+  save_gguf,
   // DType constants
   bool,
   int8,
