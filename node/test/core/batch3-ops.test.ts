@@ -241,12 +241,23 @@ describe('batch 3: multi-return and array ops', () => {
 });
 
 describe('batch 3: einsum and tensor ops', () => {
-  it.skip('einsum matrix multiply (requires steel_gemm in metallib)', () => {
-    // Skipped: JIT steel_gemm kernels not in prebuilt metallib
+  it('einsum matrix multiply', () => {
+    const a = core.array(new Float32Array([1, 2, 3, 4]), [2, 2]);
+    const b = core.array(new Float32Array([5, 6, 7, 8]), [2, 2]);
+    const c = core.einsum('ij,jk->ik', [a, b]);
+    assert.deepStrictEqual(c.shape, [2, 2]);
+    const vals = c.toArray() as number[];
+    // [[1,2],[3,4]] @ [[5,6],[7,8]] = [[19,22],[43,50]]
+    assert.deepStrictEqual(vals, [19, 22, 43, 50]);
   });
 
-  it.skip('tensordot (requires steel_gemm in metallib)', () => {
-    // Skipped: JIT steel_gemm kernels not in prebuilt metallib
+  it('tensordot', () => {
+    const a = core.array(new Float32Array([1, 2, 3, 4]), [2, 2]);
+    const b = core.array(new Float32Array([5, 6, 7, 8]), [2, 2]);
+    const c = core.tensordot(a, b, 1);
+    assert.deepStrictEqual(c.shape, [2, 2]);
+    const vals = c.toArray() as number[];
+    assert.deepStrictEqual(vals, [19, 22, 43, 50]);
   });
 });
 

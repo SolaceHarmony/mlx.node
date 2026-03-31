@@ -214,20 +214,19 @@ describe('batch ops: shape & creation', () => {
     assert.deepEqual(f.toArray(), [1, 2, 3, 4, 5, 6]);
   });
 
-  // TODO: eye/identity/diag use scatter JIT kernels which segfault — needs metallib JIT support
-  it.skip('eye', () => {
+  it('eye', () => {
     const e = core.eye(3);
     assert.deepEqual(e.shape, [3, 3]);
     assert.deepEqual(e.toArray(), [1, 0, 0, 0, 1, 0, 0, 0, 1]);
   });
 
-  it.skip('eye with m != n', () => {
+  it('eye with m != n', () => {
     const e = core.eye(2, { m: 3 });
     assert.deepEqual(e.shape, [2, 3]);
     assert.deepEqual(e.toArray(), [1, 0, 0, 0, 1, 0]);
   });
 
-  it.skip('identity', () => {
+  it('identity', () => {
     const id = core.identity(3);
     assert.deepEqual(id.shape, [3, 3]);
     assert.deepEqual(id.toArray(), [1, 0, 0, 0, 1, 0, 0, 0, 1]);
@@ -288,8 +287,7 @@ describe('batch ops: shape & creation', () => {
     assert.equal(arr[2], 0); // value 3
   });
 
-  it.skip('diag', () => {
-    // Uses scatter JIT kernels — segfaults until metallib JIT support added
+  it('diag', () => {
     const a = core.array(new Float32Array([1, 2, 3]), [3], 'float32');
     const d = core.diag(a);
     assert.deepEqual(d.shape, [3, 3]);
