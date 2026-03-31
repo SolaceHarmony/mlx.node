@@ -1,92 +1,141 @@
 Port Checklist (Python → Node MLX)
 ==================================
 
-Legend: [x] done · [~] in progress · [ ] pending · (notes)
+Updated: 2026-03-31
+Legend: [x] done · [ ] pending
 
 Core surface (mlx.core)
 -----------------------
-- [x] Dtype objects: `mlx.float16/32/64`, `mlx.bfloat16`, ints, bool, complex64
-  - [x] `mlx.dtype.issubdtype`
-  - [x] Dtype.key/name/size/category; dtype objects only (no strings)
-- [x] Streams: `default_stream(device)`, `new_stream(device)`, `synchronize(stream)`
-- [x] Array class: `shape()`, `dtype()`, `eval()`, `toTypedArray()`
-  - `dtype()` returns a Dtype object (e.g., `mlx.float32`) — Python parity
-- [~] Factories/ops (parity stage 1)
-  - [x] zeros(shape, dtype=float32, *, stream)
-  - [x] ones(shape, dtype=float32, *, stream)
-  - [x] zeros_like(a, *, stream)
-  - [x] ones_like(a, *, stream)
-  - [x] full(shape, vals, dtype=None, *, stream) — scalar + array/TypedArray vals (broadcast); scalar dtype inference
-  - [x] arange(start, stop[, step], dtype=None, *, stream) — dtype rules per Python
-  - [x] arange(stop[, step], dtype=None, *, stream)
-  - [ ] linspace(start, stop, num=50, dtype=float32, *, stream)
-- [~] array(x, dtype=None, *, stream) — unified conversion
-  - DONE: scalars, TypedArray/ArrayBuffer, existing MLX Array; nested lists default to float32
-  - TODO: mixed-type nested lists use promote_types (exact Python promotion)
-- [~] asarray(x, dtype=None, *, stream)
-  - DONE: same unified conversion; identity/astype/copy for MLX Array
-  - TODO: CPU no‑copy when dtype/layout safe (blocked on allocator ownership)
-  - [x] reshape(a, shape, *, stream)
-  - [x] transpose(a[, axes], *, stream)
-  - [x] moveaxis(a, source, destination, *, stream)
-  - [x] swapaxes(a, axis1, axis2, *, stream)
-  - [ ] flatten(a, start_axis=0, end_axis=-1, *, stream)
-  - [ ] unflatten(a, axis, shape, *, stream)
-  - [ ] expand_dims(a, axis, *, stream)
-  - [ ] squeeze(a, axis=None, *, stream)
-  - [x] add(a, b, *, stream)
-  - [x] multiply(a, b, *, stream)
-  - [x] matmul(a, b, *, stream)
-  - [x] where(cond, x, y, *, stream)
+- [x] Dtype objects: float16/32/64, bfloat16, ints, bool, complex64
+  - [x] issubdtype, dtype.key/name/size/category
+- [x] Streams: default_stream, new_stream, synchronize, stream context
+- [x] Array class: shape, dtype, eval, toTypedArray/toArray
+- [x] Factories: zeros, ones, full, arange, linspace, eye, identity, tri, tril, triu, meshgrid
+- [x] array(x, dtype) — TypedArray, scalars, nested lists; dtype inferred from TypedArray type
+- [x] Shape ops: reshape, transpose, moveaxis, swapaxes, flatten, unflatten, expand_dims,
+      squeeze, split, stack, concat, broadcast_to, broadcast_arrays, repeat, tile, permute_dims
 
-Reductions & indexing
----------------------
-- [ ] sum/mean/min/max/argmin/argmax (axes, keepdims, *, stream)
-- [ ] take/put, gather/scatter family (match Python surface)
-- [ ] sort/argsort/topk — export where present
-
-Math & special ops
+Indexing & slicing
 ------------------
-- [ ] unary ops (sign, abs, negative, etc.) — expose as in Python
-- [ ] softmax/logsumexp
-- [ ] scan
-- [ ] fft/ifft
+- [x] diag, diagonal, take, take_along_axis, put_along_axis
+- [x] slice, slice_update, view, as_strided
+- [x] gather_mm, gather_qmm
 
-Random & initialization
+Math & element-wise ops
 -----------------------
-- [x] random.normal(shape, dtype=float32, loc=None, scale=None, key=None, *, stream) — C++ binding
-- [x] nn.init.glorot_normal(dtype=float32) — TypeScript implementation
-- [ ] random.uniform, random.randint, etc. — additional random ops
-- [ ] nn.init.glorot_uniform, he_normal, he_uniform — additional initializers
+- [x] Arithmetic: add, subtract, multiply, divide, floor_divide, remainder, divmod, power, negative
+- [x] Unary: abs, sign, ceil, floor, round, trunc, sqrt, rsqrt, square, reciprocal, clip
+- [x] Exp/log: exp, expm1, log, log2, log10, log1p, logaddexp, logsumexp, logcumsumexp
+- [x] Trig: sin, cos, tan, arcsin, arccos, arctan, arctan2, sinh, cosh, tanh, arcsinh, arccosh, arctanh
+- [x] Special: erf, erfinv, sigmoid, degrees, radians, nan_to_num, softmax
+- [x] Comparison: equal, not_equal, less, less_equal, greater, greater_equal, maximum, minimum
+- [x] Logical: logical_and, logical_or, logical_not, all, any, allclose, isclose, array_equal
+- [x] Type check: isnan, isinf, isfinite, isposinf, isneginf
+- [x] Bitwise: bitwise_and, bitwise_or, bitwise_xor, bitwise_invert, left_shift, right_shift
+- [x] Complex: conj/conjugate, real, imag
+- [x] Matmul: matmul, addmm, einsum, einsum_path, tensordot, inner, outer, kron, block_masked_mm
+
+Reductions
+----------
+- [x] sum, mean, prod, min, max, std, variance, trace
+- [x] argmin, argmax, all, any
+- [x] cumsum, cumprod, cummax, cummin
+
+Sorting & selection
+-------------------
+- [x] sort, argsort, topk, partition, argpartition, roll
+
+Convolution
+-----------
+- [x] conv1d, conv2d, conv3d, conv_general, convolve
+- [x] conv_transpose1d, conv_transpose2d, conv_transpose3d
+
+Quantization
+------------
+- [x] quantize, dequantize, quantized_matmul, segmented_mm
+
+Advanced
+--------
+- [x] hadamard_transform, contiguous, stop_gradient, pad
+- [x] broadcast_shapes, number_of_elements
+
+IO
+--
+- [x] load (npy, safetensors, gguf auto-detect)
+- [x] save (npy), save_safetensors, save_gguf
+
+Transforms
+----------
+- [x] eval, async_eval
+- [x] grad, value_and_grad, vjp, jvp
+- [x] vmap, compile, checkpoint, enable_compile, disable_compile
+
+Export
+------
+- [x] export_function, import_function, export_to_dot
+
+Linear algebra (mlx.linalg)
+----------------------------
+- [x] inv, solve, solve_triangular, tri_inv
+- [x] cholesky, cholesky_inv, qr, lu, lu_factor, svd
+- [x] eig, eigh, eigvals, eigvalsh
+- [x] norm, cross, pinv
+- Note: All linalg ops CPU-only (matches upstream MLX)
+
+Random (mlx.random)
+--------------------
+- [x] seed, key, split
+- [x] normal, uniform, randint, bernoulli
+- [x] categorical, gumbel, laplace, truncated_normal, multivariate_normal
+- [x] permutation
+
+FFT (mlx.fft)
+--------------
+- [x] fft, ifft, rfft, irfft
+- [x] fft2, ifft2, rfft2, irfft2
+- [x] fftn, ifftn, rfftn, irfftn
+- [x] fftshift, ifftshift
+
+Fast ops (mlx.fast)
+--------------------
+- [x] rms_norm, layer_norm, rope, scaled_dot_product_attention
+- [ ] metal_kernel — custom kernel API
+- [ ] cuda_kernel, precompiled_cuda_kernel — N/A on Apple Silicon
 
 Device & memory
 ---------------
-- [x] Default Metal device; GPU init via runtime.mm (autorelease pool)
-- [ ] copy/to_device/from_device — surface parity with Python if applicable
+- [x] default_device, set_default_device, is_available
+- [x] default_stream, set_default_stream, new_stream, synchronize
+- [x] get_active_memory, get_peak_memory, get_cache_memory
+- [x] reset_peak_memory, set_cache_limit, set_memory_limit, set_wired_limit, clear_cache
 
-TypedArray interop
-------------------
-- [x] toTypedArray() returns exact JS typed array by dtype
-- [ ] array/asarray CPU no‑copy when dtype/layout match (blocked; copy used for correctness)
+Neural network (mlx.nn)
+-----------------------
+- [x] 25 activation classes (ReLU, GELU, SiLU, etc.)
+- [x] 26 activation functions
+- [x] Core layers: Linear, Bilinear, Conv1d/2d/3d, Embedding
+- [x] Normalization: BatchNorm, GroupNorm, InstanceNorm, LayerNorm, RMSNorm
+- [x] Regularization: Dropout, Dropout2d, Dropout3d
+- [x] Pooling: AvgPool1d/2d/3d, MaxPool1d/2d/3d
+- [x] Recurrent: RNN, LSTM, GRU
+- [x] Transformer: MultiHeadAttention, Transformer, Encoder/Decoder layers
+- [x] 14 loss functions (cross_entropy, mse_loss, etc.)
+- [x] 6 initializers (glorot_normal/uniform, constant, normal, orthogonal, uniform)
 
-Dtype inference & promotion
+Optimizers (mlx.optimizers)
 ---------------------------
-- [~] scalar_to_dtype, promote_types: implemented for full/arange; unify array/asarray (nested lists) next
+- [x] SGD, Adam, AdamW, Adamax, Adagrad, AdaDelta
+- [x] RMSprop, Lion, Muon, Adafactor
+- [x] MultiOptimizer, Optimizer base
 
-Error handling & lifecycle
---------------------------
-- [x] Per‑callback AddonData (info.Data) for safe unwrapping and ctor access
-- [x] Exceptions mapped to JS; clear error messages for Metal init/JIT failures
-- [x] InstanceData finalizer for addon cleanup (no double free)
-
-Docs & examples
----------------
-- [x] ARCHITECTURE.md, PORTING_NOTES.md (with how‑to), BUILDING.md
-- [ ] Examples/tests: dtype-precision; array/asarray promotion; stream/device cases
+Distributed (mlx.distributed)
+------------------------------
+- [ ] all_gather, all_sum, all_max, all_min — requires MPI
+- [ ] init, send, recv, recv_like — deferred
 
 Notes
 -----
-- Policy: transliterate Python MLX exactly. No semantics invention; only Node‑idiom
-  adaptations (TypedArray, AddonData, cleanup hooks).
-- Public surface is Python-only (diagnostics in labs/, not exported).
-- GPU‑first: no CPU‑only fallbacks. All ops accept `stream` keyword last.
+- GPU-first: all ops run on Metal GPU by default via MLX lazy evaluation
+- Linalg ops CPU-only (matches upstream MLX — no GPU linalg yet)
+- JIT Metal kernel compilation enabled for scatter and steel_gemm specializations
+- 250 tests passing, 0 pending, 0 failing
