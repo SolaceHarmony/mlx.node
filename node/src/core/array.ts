@@ -222,12 +222,13 @@ export class MLXArray {
   static from(
     data: SupportedTypedArray | NumericArray,
     shape: readonly number[],
-    dtype: DType = 'float32',
+    dtype?: DType,
   ): MLXArray {
+    const resolvedDtype = dtype ?? (isTypedArray(data) ? inferDTypeFromTypedArray(data) : 'float32');
     const normalizedShape = normalizeShape(shape);
     const elements = elementCount(normalizedShape);
-    const typed = ensureTypedArray(data, dtype, elements);
-    const handle = addon.Array.fromTypedArray(typed, normalizedShape, dtype);
+    const typed = ensureTypedArray(data, resolvedDtype, elements);
+    const handle = addon.Array.fromTypedArray(typed, normalizedShape, resolvedDtype);
     return MLXArray.fromHandle(handle);
   }
 
@@ -287,14 +288,13 @@ export class MLXArray {
 
 export function array(
   data: SupportedTypedArray | NumericArray,
-  shape: readonly number[],
+  shape?: readonly number[],
   dtype?: DTypeLike,
 ): MLXArray {
-  // For now, MLXArray.from still uses DType strings internally
-  // Convert to string key for internal API
+  const inferredShape = shape ?? (isTypedArray(data) ? [data.length] : [data.length]);
   const dtypeObj = toDtype(dtype);
-  const dtypeKey = dtypeObj ? (dtypeObj.key as DType) : 'float32';
-  return MLXArray.from(data, shape, dtypeKey);
+  const dtypeKey = dtypeObj ? (dtypeObj.key as DType) : undefined;
+  return MLXArray.from(data, inferredShape, dtypeKey);
 }
 
 export const normalizeShapeInput = (shape: readonly number[]): number[] =>

@@ -120,16 +120,14 @@ describe('core.array', () => {
       assert.deepEqual(x.toArray(), [42, 42, 42]);
     });
 
-    it.skip('broadcasts MLXArray values', () => {
-      // TODO: mlx::core::full doesn't broadcast array values — needs broadcast_to + full
+    it('broadcasts MLXArray values', () => {
       const value = core.array([1, 2], [2], 'int32');
       const x = core.full([3, 2], value);
       assert.deepEqual(x.shape, [3, 2]);
       assert.deepEqual(x.toArray(), [1, 2, 1, 2, 1, 2]);
     });
 
-    it.skip('broadcasts TypedArray values', () => {
-      // TODO: mlx::core::full doesn't broadcast array values — needs broadcast_to + full
+    it('broadcasts TypedArray values', () => {
       const value = new Float32Array([2, 3]);
       const x = core.full([2, 2], value);
       assert.deepEqual(x.shape, [2, 2]);

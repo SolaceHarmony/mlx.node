@@ -27,8 +27,10 @@ describe('batch 3: unary math ops', () => {
     assert.deepStrictEqual(v, [false, true, false, false]);
   });
 
-  it.skip('bitwise_invert (requires integer dtype array creation)', () => {
-    // Skipped: array(Int32Array) currently creates float32; bitwise_invert requires int
+  it('bitwise_invert', () => {
+    const a = core.array(new Int32Array([0, 1, -1, 255]));
+    const r = core.bitwise_invert(a);
+    assert.deepStrictEqual(r.toArray(), [-1, -2, 0, -256]);
   });
 
   it('conjugate / conj', () => {
