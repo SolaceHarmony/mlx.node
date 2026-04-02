@@ -17,7 +17,13 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (Array.isArray(value)) {
     return false;
   }
-  return typeof value === 'object';
+  if (typeof value !== 'object') {
+    return false;
+  }
+  // Only treat objects with Object.prototype (or null prototype) as plain objects.
+  // Class instances like MLXArray have their own prototype and should be treated as leaves.
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
 
 function isVisitOptions(value: unknown): value is TreeVisitOptions {

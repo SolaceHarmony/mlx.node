@@ -5,8 +5,8 @@
  * Based on mlx.optimizers from the Python MLX library.
  */
 
-import MLXArray, { zeros, zeros_like } from '../core/array';
-import { add, multiply, subtract, sign, square, sqrt, divide, abs, maximum, minimum, matmul, reshape, transpose, rsqrt, power } from '../core/ops';
+import MLXArray, { zeros, zeros_like, array } from '../core/array';
+import { add, multiply, subtract, sign, square, sqrt, divide, abs, maximum, minimum, matmul, reshape, transpose, rsqrt, power, sum } from '../core/ops';
 import { tree_map, tree_flatten, tree_unflatten, tree_merge } from '../utils';
 
 /**
@@ -41,43 +41,49 @@ export abstract class Optimizer {
    * @param parameters - A tree of parameters
    */
   init(parameters: Record<string, any>): void {
-    // Initialize the optimizer state to match the parameter state
-    const updateState = (params: any, state: any): any => {
-      if (Array.isArray(params) || params instanceof Array) {
-        const stateArray = Array.isArray(state) ? state : [];
+    // Build or update the per-parameter state tree to match the shape of `parameters`.
+    // This is stored under this._state._params so that optimizer-level keys (step,
+    // learning_rate, etc.) do not interfere with tree traversal.
+    const buildParamState = (params: any, existing: any): any => {
+      if (Array.isArray(params)) {
+        const arr: any[] = Array.isArray(existing) ? existing : [];
         for (let i = 0; i < params.length; i++) {
-          if (i < stateArray.length) {
-            stateArray[i] = updateState(params[i], stateArray[i]);
+          if (i < arr.length) {
+            arr[i] = buildParamState(params[i], arr[i]);
           } else {
-            stateArray.push(tree_map(() => ({}), params[i]));
+            arr.push(buildParamState(params[i], {}));
           }
         }
-        return stateArray;
-      } else if (params !== null && typeof params === 'object' && !(params instanceof MLXArray)) {
-        const stateObj = state || {};
+        return arr;
+      } else if (params instanceof MLXArray) {
+        // Leaf parameter — return the existing per-param state object (or create one).
+        return (existing && Object.getPrototypeOf(existing) === Object.prototype) ? existing : {};
+      } else if (params !== null && typeof params === 'object') {
+        const obj: Record<string, any> = (existing && Object.getPrototypeOf(existing) === Object.prototype) ? existing : {};
         for (const [k, v] of Object.entries(params)) {
-          if (!(k in stateObj)) {
-            stateObj[k] = tree_map(() => ({}), v);
-          } else {
-            stateObj[k] = updateState(v, stateObj[k]);
-          }
+          obj[k] = buildParamState(v, obj[k]);
         }
-        return stateObj;
+        return obj;
       } else {
-        return state;
+        return existing;
       }
     };
 
-    updateState(parameters, this._state);
+    // Build the per-parameter state tree (stored separately from optimizer-level keys).
+    const paramState = buildParamState(parameters, this._state._params);
+    this._state._params = paramState;
+
+    // Walk the parameter tree alongside the per-param state and call initSingle on
+    // each leaf that has an empty state object.
     tree_map(
       (p: any, s: any) => {
-        if (p instanceof MLXArray && (!s || Object.keys(s).length === 0)) {
-          return this.initSingle(p, s || {});
+        if (p instanceof MLXArray && s && Object.getPrototypeOf(s) === Object.prototype && Object.keys(s).length === 0) {
+          this.initSingle(p, s);
         }
         return s;
       },
       parameters,
-      this._state
+      paramState,
     );
     this._initialized = true;
   }
@@ -108,13 +114,12 @@ export abstract class Optimizer {
       this._state[param] = scheduler(this.step);
     }
 
-    // Increment the step
-    const currentStep = this.step.toTypedArray()[0] as number;
-    this._state.step = zeros([], 'uint64');
-    // Note: We would need to set the actual value here but that requires array construction from scalar
-    // For now, this is a placeholder that needs proper implementation
+    // Increment the step counter (stored as uint64 scalar)
+    const currentStep = Number(this.step.toTypedArray()[0]);
+    this._state.step = array([currentStep + 1], [], 'uint64');
 
-    // Apply the update
+    // Apply the per-parameter update using the per-param state tree.
+    const paramState = this._state._params;
     return tree_map(
       (gradient: any, parameter: any, state: any) => {
         if (gradient instanceof MLXArray && parameter instanceof MLXArray) {
@@ -124,14 +129,14 @@ export abstract class Optimizer {
       },
       gradients,
       parameters,
-      this._state
+      paramState,
     ) as Record<string, any>;
   }
 
   /**
    * Apply the optimizer update to a single parameter.
    * To be implemented by derived classes.
-   * 
+   *
    * @param gradient - The gradient for this parameter
    * @param parameter - The parameter to update
    * @param state - The optimizer's state for this parameter
@@ -144,9 +149,17 @@ export abstract class Optimizer {
   ): MLXArray;
 
   /**
-   * Get the optimizer's state dictionary
+   * Get the optimizer's state dictionary.
+   *
+   * Returns a view that merges optimizer-level keys (step, learning_rate, …) with the
+   * per-parameter state tree stored under `_params`.  This lets callers write
+   * `optimizer.state.weight.v` while still keeping the internal `_params` sub-tree.
    */
   get state(): Record<string, any> {
+    const { _params, ...rest } = this._state;
+    if (_params && typeof _params === 'object' && !Array.isArray(_params)) {
+      return { ...rest, ..._params };
+    }
     return this._state;
   }
 
@@ -264,62 +277,38 @@ export class SGD extends Optimizer {
     parameter: MLXArray,
     state: Record<string, any>
   ): MLXArray {
-    // Note: This is a simplified implementation that demonstrates the structure.
-    // The full implementation requires additional operations that are not yet
-    // available in the Node.js bindings:
-    // - Subtraction operator
-    // - Scalar multiplication with arrays
-    // - astype() for dtype conversion
-    //
-    // This code will need to be updated once those operations are available.
-    
-    throw new Error(
-      'SGD.applySingle is not yet fully implemented. ' +
-      'This requires additional core operations (subtract, scalar ops, etc.) ' +
-      'that are not yet available in the Node.js MLX bindings.'
+    let grad = gradient;
+
+    // Apply weight decay (L2 regularization) to the gradient if configured.
+    if (this.weightDecay !== 0) {
+      grad = add(grad, multiply(this.weightDecay, parameter));
+    }
+
+    // If momentum is disabled, use simple gradient descent: w ← w - lr * g.
+    if (this.momentum <= 0) {
+      return subtract(parameter, multiply(this.learningRate, grad));
+    }
+
+    // Retrieve velocity from state (initialized by initSingle).
+    let v = state.v;
+
+    // Update velocity: v ← momentum * v + (1 - dampening) * g.
+    v = add(
+      multiply(this.momentum, v),
+      multiply(1 - this.dampening, grad)
     );
 
-    // This is what the implementation should look like once operations are available:
-    /*
-    let grad = gradient;
-    
-    // Apply weight decay if configured
-    if (this.weightDecay !== 0) {
-      grad = add(grad, multiply(array(this.weightDecay), parameter));
-    }
+    // Nesterov update: update ← g + momentum * v.
+    // Standard update: update ← v.
+    const update = this.nesterov
+      ? add(grad, multiply(this.momentum, v))
+      : v;
 
-    // If no momentum, do simple update
-    if (this.momentum <= 0) {
-      const lr = this.learningRate; // Would need .astype(gradient.dtype) 
-      return subtract(parameter, multiply(lr, grad));
-    }
-
-    // Get velocity from state
-    let v = state.v || zeros_like(parameter);
-    
-    // Update velocity
-    v = multiply(array(this.momentum), v);
-    if (this.dampening > 0) {
-      v = add(v, multiply(array(1 - this.dampening), grad));
-    } else {
-      v = add(v, grad);
-    }
-
-    // Compute update
-    let update: MLXArray;
-    if (this.nesterov) {
-      update = add(grad, multiply(array(this.momentum), v));
-    } else {
-      update = v;
-    }
-
-    // Store velocity
+    // Persist velocity.
     state.v = v;
 
-    // Apply update
-    const lr = this.learningRate; // Would need .astype(gradient.dtype)
-    return subtract(parameter, multiply(lr, update));
-    */
+    // Apply update: w ← w - lr * update.
+    return subtract(parameter, multiply(this.learningRate, update));
   }
 }
 
@@ -390,66 +379,39 @@ export class Adam extends Optimizer {
     parameter: MLXArray,
     state: Record<string, any>
   ): MLXArray {
-    // Note: This is a simplified implementation that demonstrates the structure.
-    // The full implementation requires additional operations that are not yet
-    // available in the Node.js bindings:
-    // - Subtraction operator
-    // - Division operator
-    // - square() for computing g²
-    // - sqrt() for computing √v
-    // - rsqrt() for bias correction
-    // - Power operator for computing β^step
-    // - astype() for dtype conversion
-    //
-    // This code will need to be updated once those operations are available.
-
-    throw new Error(
-      'Adam.applySingle is not yet fully implemented. ' +
-      'This requires additional core operations (subtract, divide, square, sqrt, rsqrt, power) ' +
-      'that are not yet available in the Node.js MLX bindings.'
-    );
-
-    // This is what the implementation should look like once operations are available:
-    /*
-    const lr = this.learningRate; // Would need .astype(gradient.dtype)
+    const lr = this.learningRate;
     const [b1, b2] = this.betas;
     const eps = this.eps;
     const biasCorrection = this.biasCorrection;
     const step = this.step;
 
-    // Get moments from state
-    let m = state.m;
-    let v = state.v;
+    // Retrieve first and second moment estimates from state.
+    let m: MLXArray = state.m;
+    let v: MLXArray = state.v;
 
-    // Update biased first moment estimate: m = β₁ * m + (1 - β₁) * g
+    // Update biased first moment estimate: m ← β₁ * m + (1 - β₁) * g.
     m = add(multiply(b1, m), multiply(1 - b1, gradient));
 
-    // Update biased second moment estimate: v = β₂ * v + (1 - β₂) * g²
+    // Update biased second moment estimate: v ← β₂ * v + (1 - β₂) * g².
     v = add(multiply(b2, v), multiply(1 - b2, square(gradient)));
 
-    // Store updated moments
+    // Persist updated moments.
     state.m = m;
     state.v = v;
 
     if (biasCorrection) {
-      // Compute bias-corrected learning rate: lr / (1 - β₁^step)
-      const c1 = divide(lr, subtract(1, power(b1, step))); // .astype(gradient.dtype)
-
-      // Compute bias correction for second moment: 1 / √(1 - β₂^step)
-      const c2 = rsqrt(subtract(1, power(b2, step))); // .astype(gradient.dtype)
-
-      // Compute update: c1 * m / (√v * c2 + ε)
-      const numerator = multiply(c1, m);
-      const denominator = add(multiply(sqrt(v), c2), eps);
-      const update = divide(numerator, denominator);
-
+      // Bias-corrected learning rate: lr_hat = lr / (1 - β₁^step).
+      const c1 = divide(lr, subtract(1, power(b1, step)));
+      // Bias-correction scale for second moment: c2 = 1 / √(1 - β₂^step).
+      const c2 = rsqrt(subtract(1, power(b2, step)));
+      // Parameter update: Δw = c1 * m / (√v * c2 + ε).
+      const update = divide(multiply(c1, m), add(multiply(sqrt(v), c2), eps));
       return subtract(parameter, update);
     } else {
-      // Compute update without bias correction: lr * m / (√v + ε)
+      // Standard update without bias correction: Δw = lr * m / (√v + ε).
       const update = divide(multiply(lr, m), add(sqrt(v), eps));
       return subtract(parameter, update);
     }
-    */
   }
 }
 
@@ -1338,17 +1300,19 @@ export class MultiOptimizer extends Optimizer {
   ): Record<string, any> {
     const gradientSplits = this._splitDictionary(gradients);
     const parameterSplits = this._splitDictionary(parameters);
-    let result: Record<string, any> = {};
+    let result: Record<string, any> | null = null;
 
     for (let i = 0; i < this.optimizers.length; i++) {
       const updated = this.optimizers[i].applyGradients(
         gradientSplits[i],
         parameterSplits[i]
       );
-      result = tree_merge(result, updated) as Record<string, any>;
+      // Merge: prefer the updated value when both sides share a leaf (last-write wins).
+      // When one side is null (empty split), take the other side.
+      result = tree_merge(result ?? {}, updated, (a, b) => b ?? a) as Record<string, any>;
     }
 
-    return result;
+    return (result ?? {}) as Record<string, any>;
   }
 
   /**
@@ -1502,16 +1466,11 @@ export class Muon extends Optimizer {
       Y = transpose(Y);
     }
 
-    // Normalize: Y = Y / (norm(Y) + 1e-7)
-    // norm is computed as sqrt(sum(square(Y)))
-    const arr = Y.toTypedArray();
-    let normSquared = 0;
-    for (let i = 0; i < arr.length; i++) {
-      const val = typeof arr[i] === 'bigint' ? Number(arr[i]) : Number(arr[i]);
-      normSquared += val * val;
-    }
-    const norm = Math.sqrt(normSquared);
-    Y = divide(Y, norm + 1e-7);
+    // Normalize: Y = Y / (frobenius_norm(Y) + 1e-7)
+    // Computed using MLX ops to stay on-device (avoid .toTypedArray() GPU sync).
+    const normSq = sum(square(Y));
+    const normVal = sqrt(normSq);
+    Y = divide(Y, add(normVal, 1e-7));
 
     // Newton-Schulz iterations
     for (let i = 0; i < steps; i++) {
