@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { nn, zeros, array } from '../../src';
+import { nn, zeros, array } from '../src';
 
 const toArray = (tensor: ReturnType<typeof array>): number[] => tensor.toArray() as number[];
 

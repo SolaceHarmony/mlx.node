@@ -26,6 +26,11 @@ export { core, utils, streaming, react, optimizers, nn_init, nn };
 // Usage: import { array, zeros } from 'mlx';
 export const {
   array,
+  from_js_array,
+  array_builder,
+  asarray,
+  ArrayBuilder,
+  MLX_ARRAY_SYMBOL,
   Array,
   Stream,
   issubdtype,

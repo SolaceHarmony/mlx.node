@@ -4,6 +4,7 @@ namespace mlx::node {
 
 AddonData::~AddonData() {
   array_constructor.Reset();
+  array_builder_constructor.Reset();
   dtype_constructor.Reset();
   dtype_category_constructor.Reset();
   stream_constructor.Reset();

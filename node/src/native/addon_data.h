@@ -6,6 +6,7 @@ namespace mlx::node {
 
 struct AddonData {
   Napi::FunctionReference array_constructor;
+  Napi::FunctionReference array_builder_constructor;
   Napi::FunctionReference dtype_constructor;
   Napi::FunctionReference dtype_category_constructor;
   Napi::FunctionReference stream_constructor;

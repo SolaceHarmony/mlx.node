@@ -1,5 +1,10 @@
 import MLXArray, {
   array,
+  from_js_array,
+  array_builder,
+  asarray,
+  ArrayBuilder,
+  MLX_ARRAY_SYMBOL,
   zeros,
   zeros_like,
   ones,
@@ -358,7 +363,7 @@ export type {
   LogCumSumExpOptions,
   TraceOptions,
 } from './ops';
-export { MLXArray, MLXArray as Array, array };
+export { MLXArray, MLXArray as Array, array, from_js_array, array_builder, asarray, ArrayBuilder, MLX_ARRAY_SYMBOL };
 export { zeros, zeros_like, ones, ones_like, full };
 export { deviceModule as device };
 export {

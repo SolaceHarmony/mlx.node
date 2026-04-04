@@ -221,17 +221,10 @@ class ArrayWrapper : public Napi::ObjectWrap<ArrayWrapper> {
     return shapeValues;
   }
 
-  template <typename T>
-  static std::vector<T> CopyTypedArray(const Napi::TypedArray& typed) {
-    size_t length = typed.ElementLength();
-    std::vector<T> output(length);
-    std::memcpy(
-        output.data(),
-        static_cast<const uint8_t*>(typed.ArrayBuffer().Data()) +
-            typed.ByteOffset(),
-        length * sizeof(T));
-    return output;
-  }
+  // NOTE: CopyTypedArray is intentionally not provided.  All typed-array paths
+  // now go through MakeArrayFromTyped which writes directly from the V8
+  // ArrayBuffer backing-store into mlx::core::allocator::malloc memory,
+  // avoiding the intermediate std::vector<T>.
 
   static std::optional<mlx::core::array> MakeArrayFromTyped(
       Napi::Env env,
@@ -367,79 +360,108 @@ class ArrayWrapper : public Napi::ObjectWrap<ArrayWrapper> {
       shape.push_back(dim);
     }
 
+    // Direct path: one mlx::core::allocator::malloc + one memcpy from the V8
+    // ArrayBuffer backing-store.  No intermediate std::vector<T>.
     switch (dtype) {
       case mlx::core::float32: {
-        auto host = CopyTypedArray<float>(typed);
-        return mlx::core::array(host.begin(), shape, dtype);
+        const size_t nbytes = elementCount * sizeof(float);
+        auto buf = mlx::core::allocator::malloc(nbytes);
+        std::memcpy(buf.raw_ptr(), rawData, nbytes);
+        return mlx::core::array(buf, shape, dtype);
       }
       case mlx::core::float64: {
-        // float64 uses double-double (Dekker split): convert double → float64_t
-        auto doubles = CopyTypedArray<double>(typed);
-        size_t nbytes = doubles.size() * sizeof(mlx::core::float64_t);
+        // float64 uses a Dekker-split internal representation (float64_t != double).
+        // A conversion loop is unavoidable; we still malloc once.
+        const size_t n = elementCount;
+        const size_t nbytes = n * sizeof(mlx::core::float64_t);
         auto buf = mlx::core::allocator::malloc(nbytes);
-        auto* ptr = static_cast<mlx::core::float64_t*>(buf.raw_ptr());
-        for (size_t i = 0; i < doubles.size(); i++) {
-          ptr[i] = mlx::core::float64_t(doubles[i]);
+        auto* dst = static_cast<mlx::core::float64_t*>(buf.raw_ptr());
+        const double* src = reinterpret_cast<const double*>(rawData);
+        for (size_t i = 0; i < n; ++i) {
+          dst[i] = mlx::core::float64_t(src[i]);
         }
         return mlx::core::array(buf, shape, dtype);
       }
       case mlx::core::int8: {
-        auto host = CopyTypedArray<int8_t>(typed);
-        return mlx::core::array(host.begin(), shape, dtype);
+        const size_t nbytes = elementCount * sizeof(int8_t);
+        auto buf = mlx::core::allocator::malloc(nbytes);
+        std::memcpy(buf.raw_ptr(), rawData, nbytes);
+        return mlx::core::array(buf, shape, dtype);
       }
       case mlx::core::uint8: {
-        auto host = CopyTypedArray<uint8_t>(typed);
-        return mlx::core::array(host.begin(), shape, dtype);
+        const size_t nbytes = elementCount * sizeof(uint8_t);
+        auto buf = mlx::core::allocator::malloc(nbytes);
+        std::memcpy(buf.raw_ptr(), rawData, nbytes);
+        return mlx::core::array(buf, shape, dtype);
       }
       case mlx::core::bool_: {
-        std::vector<bool> host(typedLength);
+        // bool in MLX is stored as uint8 (0/1).  The incoming Uint8Array already
+        // contains 0 or non-zero — normalise to strict 0/1.
+        const size_t nbytes = elementCount * sizeof(uint8_t);
+        auto buf = mlx::core::allocator::malloc(nbytes);
+        auto* dst = static_cast<uint8_t*>(buf.raw_ptr());
         const uint8_t* src = reinterpret_cast<const uint8_t*>(rawData);
-        for (size_t i = 0; i < typedLength; ++i) {
-          host[i] = src[i] != 0;
+        for (size_t i = 0; i < elementCount; ++i) {
+          dst[i] = src[i] ? 1u : 0u;
         }
-        return mlx::core::array(host.begin(), shape, dtype);
+        return mlx::core::array(buf, shape, dtype);
       }
       case mlx::core::int16: {
-        auto host = CopyTypedArray<int16_t>(typed);
-        return mlx::core::array(host.begin(), shape, dtype);
+        const size_t nbytes = elementCount * sizeof(int16_t);
+        auto buf = mlx::core::allocator::malloc(nbytes);
+        std::memcpy(buf.raw_ptr(), rawData, nbytes);
+        return mlx::core::array(buf, shape, dtype);
       }
       case mlx::core::uint16: {
-        auto host = CopyTypedArray<uint16_t>(typed);
-        return mlx::core::array(host.begin(), shape, dtype);
+        const size_t nbytes = elementCount * sizeof(uint16_t);
+        auto buf = mlx::core::allocator::malloc(nbytes);
+        std::memcpy(buf.raw_ptr(), rawData, nbytes);
+        return mlx::core::array(buf, shape, dtype);
       }
       case mlx::core::float16: {
-        std::vector<mlx::core::float16_t> host(typedLength);
-        std::memcpy(host.data(), rawData, typedLength * sizeof(uint16_t));
-        return mlx::core::array(host.begin(), shape, dtype);
+        // float16_t has the same wire format as uint16; straight memcpy.
+        const size_t nbytes = elementCount * sizeof(uint16_t);
+        auto buf = mlx::core::allocator::malloc(nbytes);
+        std::memcpy(buf.raw_ptr(), rawData, nbytes);
+        return mlx::core::array(buf, shape, dtype);
       }
       case mlx::core::bfloat16: {
-        std::vector<mlx::core::bfloat16_t> host(typedLength);
-        std::memcpy(host.data(), rawData, typedLength * sizeof(uint16_t));
-        return mlx::core::array(host.begin(), shape, dtype);
+        const size_t nbytes = elementCount * sizeof(uint16_t);
+        auto buf = mlx::core::allocator::malloc(nbytes);
+        std::memcpy(buf.raw_ptr(), rawData, nbytes);
+        return mlx::core::array(buf, shape, dtype);
       }
       case mlx::core::int32: {
-        auto host = CopyTypedArray<int32_t>(typed);
-        return mlx::core::array(host.begin(), shape, dtype);
+        const size_t nbytes = elementCount * sizeof(int32_t);
+        auto buf = mlx::core::allocator::malloc(nbytes);
+        std::memcpy(buf.raw_ptr(), rawData, nbytes);
+        return mlx::core::array(buf, shape, dtype);
       }
       case mlx::core::uint32: {
-        auto host = CopyTypedArray<uint32_t>(typed);
-        return mlx::core::array(host.begin(), shape, dtype);
+        const size_t nbytes = elementCount * sizeof(uint32_t);
+        auto buf = mlx::core::allocator::malloc(nbytes);
+        std::memcpy(buf.raw_ptr(), rawData, nbytes);
+        return mlx::core::array(buf, shape, dtype);
       }
       case mlx::core::int64: {
-        auto host = CopyTypedArray<int64_t>(typed);
-        return mlx::core::array(host.begin(), shape, dtype);
+        const size_t nbytes = elementCount * sizeof(int64_t);
+        auto buf = mlx::core::allocator::malloc(nbytes);
+        std::memcpy(buf.raw_ptr(), rawData, nbytes);
+        return mlx::core::array(buf, shape, dtype);
       }
       case mlx::core::uint64: {
-        auto host = CopyTypedArray<uint64_t>(typed);
-        return mlx::core::array(host.begin(), shape, dtype);
+        const size_t nbytes = elementCount * sizeof(uint64_t);
+        auto buf = mlx::core::allocator::malloc(nbytes);
+        std::memcpy(buf.raw_ptr(), rawData, nbytes);
+        return mlx::core::array(buf, shape, dtype);
       }
       case mlx::core::complex64: {
-        const float* src = reinterpret_cast<const float*>(rawData);
-        std::vector<mlx::core::complex64_t> host(elementCount);
-        for (size_t i = 0; i < elementCount; ++i) {
-          host[i] = mlx::core::complex64_t(src[2 * i], src[2 * i + 1]);
-        }
-        return mlx::core::array(host.begin(), shape, dtype);
+        // complex64 is stored as interleaved (re, im) float pairs; the
+        // incoming Float32Array has the same layout — straight memcpy.
+        const size_t nbytes = elementCount * 2 * sizeof(float);
+        auto buf = mlx::core::allocator::malloc(nbytes);
+        std::memcpy(buf.raw_ptr(), rawData, nbytes);
+        return mlx::core::array(buf, shape, dtype);
       }
       default:
         Napi::TypeError::New(env, "Unsupported dtype conversion")
@@ -534,134 +556,130 @@ class ArrayWrapper : public Napi::ObjectWrap<ArrayWrapper> {
 
   Napi::Value ToFloat32Array(const Napi::CallbackInfo& info) {
     auto env = info.Env();
-    // Flatten to ensure contiguous row-major layout (handles transposed/strided views)
-    auto flat = mlx::core::flatten(tensor());
-    flat.eval();
+    // Flatten to ensure contiguous row-major layout.  eval() flushes the lazy
+    // graph so data<float>() is valid.
+    auto flat_arr = std::make_shared<mlx::core::array>(
+        mlx::core::flatten(tensor()));
+    flat_arr->eval();
 
-    const auto length = flat.size();
-    Napi::ArrayBuffer buffer =
-        Napi::ArrayBuffer::New(env, length * sizeof(float));
-    Napi::Float32Array jsArray =
-        Napi::Float32Array::New(env, length, buffer, 0);
-    std::memcpy(buffer.Data(), flat.data<float>(), length * sizeof(float));
-    return jsArray;
+    const size_t length = flat_arr->size();
+    const size_t nbytes = length * sizeof(float);
+
+    // Zero-copy: point the V8 ArrayBuffer directly at the MLX malloc buffer.
+    // The shared_ptr keeps the mlx::core::array alive until V8 GCs the buffer.
+    float* raw = flat_arr->data<float>();
+    auto* hint = new std::shared_ptr<mlx::core::array>(flat_arr);
+    Napi::ArrayBuffer buffer = Napi::ArrayBuffer::New(
+        env,
+        raw,
+        nbytes,
+        [](Napi::Env /*env*/, void* /*data*/, void* h) {
+          delete static_cast<std::shared_ptr<mlx::core::array>*>(h);
+        },
+        hint);
+    return Napi::Float32Array::New(env, length, buffer, 0);
   }
 
   Napi::Value ToTypedArray(const Napi::CallbackInfo& info) {
     auto env = info.Env();
-    // Flatten to ensure contiguous row-major layout (handles transposed/strided views)
-    auto arr = mlx::core::flatten(tensor());
-    arr.eval();
+    // Flatten to ensure contiguous row-major layout.
+    auto arr = std::make_shared<mlx::core::array>(
+        mlx::core::flatten(tensor()));
+    arr->eval();
 
-    const auto dtype = arr.dtype();
-    const size_t length = arr.size();
+    const auto dtype = arr->dtype();
+    const size_t length = arr->size();
+
+    // Helper: create an external zero-copy ArrayBuffer backed by the MLX
+    // malloc buffer and keep arr alive via shared_ptr until V8 GCs it.
+    // For dtypes where the wire format matches the JS TypedArray element type
+    // exactly, no copy is needed.
+    auto make_external = [&](void* raw,
+                             size_t nbytes) -> Napi::ArrayBuffer {
+      auto* hint = new std::shared_ptr<mlx::core::array>(arr);
+      return Napi::ArrayBuffer::New(
+          env,
+          raw,
+          nbytes,
+          [](Napi::Env /*env*/, void* /*data*/, void* h) {
+            delete static_cast<std::shared_ptr<mlx::core::array>*>(h);
+          },
+          hint);
+    };
 
     switch (dtype) {
-      case mlx::core::float32:
-        return ToFloat32Array(info);
+      case mlx::core::float32: {
+        auto buf = make_external(arr->data<float>(), length * sizeof(float));
+        return Napi::Float32Array::New(env, length, buf, 0);
+      }
       case mlx::core::float64: {
-        // Convert float64_t (double-double) back to native doubles for JS
-        auto buffer = Napi::ArrayBuffer::New(env, length * sizeof(double));
-        auto jsArray = Napi::Float64Array::New(env, length, buffer, 0);
+        // float64_t (Dekker split) is not a native JS type; we must convert
+        // to double — one copy is unavoidable here.
+        const size_t nbytes = length * sizeof(double);
+        Napi::ArrayBuffer buffer = Napi::ArrayBuffer::New(env, nbytes);
         auto* dst = static_cast<double*>(buffer.Data());
-        auto* src = arr.data<mlx::core::float64_t>();
-        for (size_t i = 0; i < length; i++) {
+        const auto* src = arr->data<mlx::core::float64_t>();
+        for (size_t i = 0; i < length; ++i) {
           dst[i] = static_cast<double>(src[i]);
         }
-        return jsArray;
+        return Napi::Float64Array::New(env, length, buffer, 0);
       }
       case mlx::core::int8: {
-        auto buffer = Napi::ArrayBuffer::New(env, length * sizeof(int8_t));
-        auto jsArray = Napi::Int8Array::New(env, length, buffer, 0);
-        std::memcpy(buffer.Data(), arr.data<int8_t>(), length * sizeof(int8_t));
-        return jsArray;
+        auto buf = make_external(arr->data<int8_t>(), length * sizeof(int8_t));
+        return Napi::Int8Array::New(env, length, buf, 0);
       }
-      case mlx::core::uint8:
+      case mlx::core::uint8: {
+        auto buf = make_external(arr->data<uint8_t>(), length * sizeof(uint8_t));
+        return Napi::Uint8Array::New(env, length, buf, 0);
+      }
       case mlx::core::bool_: {
-        auto buffer = Napi::ArrayBuffer::New(env, length * sizeof(uint8_t));
-        auto jsArray = Napi::Uint8Array::New(env, length, buffer, 0);
-        if (dtype == mlx::core::bool_) {
-          auto src = arr.data<bool>();
-          auto dest = static_cast<uint8_t*>(buffer.Data());
-          for (size_t i = 0; i < length; ++i) {
-            dest[i] = src[i] ? 1 : 0;
-          }
-        } else {
-          std::memcpy(
-              buffer.Data(), arr.data<uint8_t>(), length * sizeof(uint8_t));
-        }
-        return jsArray;
+        // bool in MLX is stored as uint8 with values 0 or 1; the external
+        // Uint8Array view is valid directly.
+        auto buf = make_external(
+            arr->data<uint8_t>(), length * sizeof(uint8_t));
+        return Napi::Uint8Array::New(env, length, buf, 0);
       }
       case mlx::core::int16: {
-        auto buffer = Napi::ArrayBuffer::New(env, length * sizeof(int16_t));
-        auto jsArray = Napi::Int16Array::New(env, length, buffer, 0);
-        std::memcpy(
-            buffer.Data(), arr.data<int16_t>(), length * sizeof(int16_t));
-        return jsArray;
+        auto buf = make_external(arr->data<int16_t>(), length * sizeof(int16_t));
+        return Napi::Int16Array::New(env, length, buf, 0);
       }
       case mlx::core::uint16: {
-        auto buffer = Napi::ArrayBuffer::New(env, length * sizeof(uint16_t));
-        auto jsArray = Napi::Uint16Array::New(env, length, buffer, 0);
-        std::memcpy(
-            buffer.Data(), arr.data<uint16_t>(), length * sizeof(uint16_t));
-        return jsArray;
+        auto buf = make_external(arr->data<uint16_t>(), length * sizeof(uint16_t));
+        return Napi::Uint16Array::New(env, length, buf, 0);
       }
       case mlx::core::float16: {
-        auto buffer = Napi::ArrayBuffer::New(env, length * sizeof(uint16_t));
-        auto jsArray = Napi::Uint16Array::New(env, length, buffer, 0);
-        std::memcpy(
-            buffer.Data(),
-            arr.data<mlx::core::float16_t>(),
-            length * sizeof(uint16_t));
-        return jsArray;
+        // float16_t has the same bit layout as uint16; expose as Uint16Array.
+        auto buf = make_external(
+            arr->data<mlx::core::float16_t>(), length * sizeof(uint16_t));
+        return Napi::Uint16Array::New(env, length, buf, 0);
       }
       case mlx::core::bfloat16: {
-        auto buffer = Napi::ArrayBuffer::New(env, length * sizeof(uint16_t));
-        auto jsArray = Napi::Uint16Array::New(env, length, buffer, 0);
-        std::memcpy(
-            buffer.Data(),
-            arr.data<mlx::core::bfloat16_t>(),
-            length * sizeof(uint16_t));
-        return jsArray;
+        auto buf = make_external(
+            arr->data<mlx::core::bfloat16_t>(), length * sizeof(uint16_t));
+        return Napi::Uint16Array::New(env, length, buf, 0);
       }
       case mlx::core::int32: {
-        auto buffer = Napi::ArrayBuffer::New(env, length * sizeof(int32_t));
-        auto jsArray = Napi::Int32Array::New(env, length, buffer, 0);
-        std::memcpy(
-            buffer.Data(), arr.data<int32_t>(), length * sizeof(int32_t));
-        return jsArray;
+        auto buf = make_external(arr->data<int32_t>(), length * sizeof(int32_t));
+        return Napi::Int32Array::New(env, length, buf, 0);
       }
       case mlx::core::uint32: {
-        auto buffer = Napi::ArrayBuffer::New(env, length * sizeof(uint32_t));
-        auto jsArray = Napi::Uint32Array::New(env, length, buffer, 0);
-        std::memcpy(
-            buffer.Data(), arr.data<uint32_t>(), length * sizeof(uint32_t));
-        return jsArray;
+        auto buf = make_external(arr->data<uint32_t>(), length * sizeof(uint32_t));
+        return Napi::Uint32Array::New(env, length, buf, 0);
       }
       case mlx::core::int64: {
-        auto buffer = Napi::ArrayBuffer::New(env, length * sizeof(int64_t));
-        auto jsArray = Napi::BigInt64Array::New(env, length, buffer, 0);
-        std::memcpy(
-            buffer.Data(), arr.data<int64_t>(), length * sizeof(int64_t));
-        return jsArray;
+        auto buf = make_external(arr->data<int64_t>(), length * sizeof(int64_t));
+        return Napi::BigInt64Array::New(env, length, buf, 0);
       }
       case mlx::core::uint64: {
-        auto buffer = Napi::ArrayBuffer::New(env, length * sizeof(uint64_t));
-        auto jsArray = Napi::BigUint64Array::New(env, length, buffer, 0);
-        std::memcpy(
-            buffer.Data(), arr.data<uint64_t>(), length * sizeof(uint64_t));
-        return jsArray;
+        auto buf = make_external(arr->data<uint64_t>(), length * sizeof(uint64_t));
+        return Napi::BigUint64Array::New(env, length, buf, 0);
       }
       case mlx::core::complex64: {
-        auto buffer = Napi::ArrayBuffer::New(env, length * 2 * sizeof(float));
-        auto jsArray = Napi::Float32Array::New(env, length * 2, buffer, 0);
-        auto src = arr.data<mlx::core::complex64_t>();
-        auto dest = static_cast<float*>(buffer.Data());
-        for (size_t i = 0; i < length; ++i) {
-          dest[2 * i] = src[i].real();
-          dest[2 * i + 1] = src[i].imag();
-        }
-        return jsArray;
+        // complex64 is stored as interleaved (re, im) float pairs.  Expose as
+        // Float32Array of length*2 — same zero-copy view.
+        auto buf = make_external(
+            arr->data<mlx::core::complex64_t>(), length * 2 * sizeof(float));
+        return Napi::Float32Array::New(env, length * 2, buf, 0);
       }
       default:
         Napi::TypeError::New(env, "Unsupported dtype for toTypedArray")
@@ -8419,6 +8437,213 @@ Napi::Value ExportToDot(const Napi::CallbackInfo& info) {
 
 } // namespace
 
+// ============================================================================
+// ArrayBuilderWrapper
+//
+// A streaming row-at-a-time tensor construction path.  Allocates exactly
+// one mlx::core::allocator::malloc buffer upfront sized for the full tensor.
+// JS feeds one row (a TypedArray of the row stride) at a time via append_row().
+// build() wraps the already-populated buffer in an mlx::core::array with no
+// further copies.
+//
+// JS API (exposed as core.array_builder):
+//
+//   const b = mx.core.array_builder('float32', [rows, cols]);
+//   for (const row of source) {          // row: Float32Array [cols]
+//     b.append_row(row);
+//   }
+//   const t = b.build();                 // returns MLXArray
+//
+// ============================================================================
+class ArrayBuilderWrapper : public Napi::ObjectWrap<ArrayBuilderWrapper> {
+ public:
+  static void Init(Napi::Env env, Napi::Object exports) {
+    Napi::Function func = DefineClass(
+        env,
+        "ArrayBuilder",
+        {
+            InstanceMethod("append_row", &ArrayBuilderWrapper::AppendRow),
+            InstanceMethod("build",      &ArrayBuilderWrapper::Build),
+        });
+    exports.Set("array_builder",
+                Napi::Function::New(env, &ArrayBuilderWrapper::Create,
+                                    "array_builder"));
+    auto& data = mlx::node::GetAddonData(env);
+    data.array_builder_constructor = Napi::Persistent(func);
+  }
+
+  /** JS factory: array_builder(dtype, shape). */
+  static Napi::Value Create(const Napi::CallbackInfo& info) {
+    auto env = info.Env();
+    auto& addon = mlx::node::GetAddonData(env);
+    if (info.Length() < 2) {
+      Napi::TypeError::New(
+          env, "array_builder(dtype, shape): expected 2 arguments")
+          .ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    // arg0: dtype string or MLXDtype object
+    if (!IsDtypeArg(env, info[0], addon)) {
+      Napi::TypeError::New(env, "array_builder: first argument must be a dtype")
+          .ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    auto dtype = MaybeParseDtype(env, info[0], mlx::core::float32, addon);
+    if (env.IsExceptionPending()) return env.Null();
+
+    // arg1: shape array
+    if (!info[1].IsArray()) {
+      Napi::TypeError::New(env, "array_builder: second argument must be a shape array")
+          .ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    auto shapeJs = info[1].As<Napi::Array>();
+    mlx::core::Shape shape;
+    size_t total = 1;
+    for (uint32_t i = 0; i < shapeJs.Length(); ++i) {
+      auto dimVal = shapeJs.Get(i);
+      if (!dimVal.IsNumber()) {
+        Napi::TypeError::New(env, "array_builder: shape entries must be numbers")
+            .ThrowAsJavaScriptException();
+        return env.Null();
+      }
+      int64_t dim = dimVal.As<Napi::Number>().Int64Value();
+      if (dim < 0) {
+        Napi::RangeError::New(env, "array_builder: shape dimensions must be non-negative")
+            .ThrowAsJavaScriptException();
+        return env.Null();
+      }
+      shape.push_back(static_cast<mlx::core::ShapeElem>(dim));
+      total *= static_cast<size_t>(dim);
+    }
+
+    size_t itemsize = mlx::core::size_of(dtype);
+    size_t nbytes   = total * itemsize;
+    size_t row_stride = (shape.size() > 1)
+        ? static_cast<size_t>(shape.back()) * itemsize
+        : nbytes; // 1D: entire array is one "row"
+
+    // Pre-allocate the MLX buffer for the full tensor.
+    mlx::core::allocator::Buffer buf = mlx::core::allocator::malloc(nbytes);
+
+    // Construct via the DefineClass constructor using Napi::External to carry
+    // the builder state.
+    struct BuilderState {
+      mlx::core::allocator::Buffer buf;
+      mlx::core::Shape             shape;
+      mlx::core::Dtype             dtype;
+      size_t                       nbytes;
+      size_t                       row_stride;   ///< bytes per row
+      size_t                       written;      ///< bytes written so far
+    };
+    auto* state    = new BuilderState{buf, shape, dtype, nbytes, row_stride, 0};
+    auto  external = Napi::External<BuilderState>::New(
+        env, state, [](Napi::Env, BuilderState* s) { delete s; });
+
+    return addon.array_builder_constructor.New({external});
+  }
+
+  explicit ArrayBuilderWrapper(const Napi::CallbackInfo& info)
+      : Napi::ObjectWrap<ArrayBuilderWrapper>(info) {
+    auto env = info.Env();
+    if (info.Length() != 1 || !info[0].IsExternal()) {
+      Napi::TypeError::New(env, "ArrayBuilder cannot be constructed directly")
+          .ThrowAsJavaScriptException();
+      return;
+    }
+    struct BuilderState {
+      mlx::core::allocator::Buffer buf;
+      mlx::core::Shape             shape;
+      mlx::core::Dtype             dtype;
+      size_t                       nbytes;
+      size_t                       row_stride;
+      size_t                       written;
+    };
+    auto* state = info[0].As<Napi::External<BuilderState>>().Data();
+    buf_        = state->buf;
+    shape_      = state->shape;
+    dtype_      = state->dtype;
+    nbytes_     = state->nbytes;
+    row_stride_ = state->row_stride;
+    written_    = state->written;
+    built_      = false;
+  }
+
+  /** Append one row (TypedArray) into the pre-allocated MLX buffer. */
+  Napi::Value AppendRow(const Napi::CallbackInfo& info) {
+    auto env = info.Env();
+    if (built_) {
+      Napi::Error::New(env, "array_builder: build() has already been called")
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+    if (info.Length() < 1 || !info[0].IsTypedArray()) {
+      Napi::TypeError::New(env, "append_row: expected a TypedArray")
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+    auto typed = info[0].As<Napi::TypedArray>();
+    const size_t nbytes_row =
+        typed.ElementLength() * typed.ElementSize();
+
+    if (nbytes_row != row_stride_) {
+      Napi::RangeError::New(
+          env,
+          "append_row: TypedArray byte length " +
+              std::to_string(nbytes_row) +
+              " does not match expected row stride " +
+              std::to_string(row_stride_))
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+    if (written_ + nbytes_row > nbytes_) {
+      Napi::RangeError::New(env, "append_row: buffer is full")
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+
+    const uint8_t* src =
+        static_cast<const uint8_t*>(typed.ArrayBuffer().Data()) +
+        typed.ByteOffset();
+    uint8_t* dst = static_cast<uint8_t*>(buf_.raw_ptr()) + written_;
+    std::memcpy(dst, src, nbytes_row);
+    written_ += nbytes_row;
+    return env.Undefined();
+  }
+
+  /** Finalise and return the MLXArray wrapping the pre-allocated buffer. */
+  Napi::Value Build(const Napi::CallbackInfo& info) {
+    auto env = info.Env();
+    if (built_) {
+      Napi::Error::New(env, "array_builder: build() may only be called once")
+          .ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    if (written_ != nbytes_) {
+      Napi::RangeError::New(
+          env,
+          "array_builder: buffer not fully written (" +
+              std::to_string(written_) + " of " +
+              std::to_string(nbytes_) + " bytes)")
+          .ThrowAsJavaScriptException();
+      return env.Null();
+    }
+    built_ = true;
+    // Wrap the buffer directly — zero copy.
+    auto tensor = std::make_shared<mlx::core::array>(buf_, shape_, dtype_);
+    return WrapArray(env, tensor);
+  }
+
+ private:
+  mlx::core::allocator::Buffer buf_{nullptr};
+  mlx::core::Shape             shape_;
+  mlx::core::Dtype             dtype_{mlx::core::float32};
+  size_t                       nbytes_{0};
+  size_t                       row_stride_{0};
+  size_t                       written_{0};
+  bool                         built_{false};
+};
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   // Defer GPU initialization to the first op to avoid loader-time hazards.
   auto& data = mlx::node::GetAddonData(env);
@@ -8438,6 +8663,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
 
   // Classes and ops under core
   ArrayWrapper::Init(env, core);
+  ArrayBuilderWrapper::Init(env, core);
   core.Set("array", Napi::Function::New(env, ArrayFactory, "array", &data));
   core.Set("asarray", Napi::Function::New(env, AsArray, "asarray", &data));
   core.Set("zeros", Napi::Function::New(env, Zeros, "zeros", &data));
