@@ -301,10 +301,48 @@ export function tanh(a: ScalarOrArray, options?: UnaryOpOptions): MLXArray { ret
 export function conjugate(a: ScalarOrArray, options?: UnaryOpOptions): MLXArray { return unaryOp('conjugate', a, options); }
 export const conj = conjugate;
 
-export function load(file: string, options?: StreamOptions): MLXArray {
+export function load(file: string, options?: StreamOptions): LoadResult {
   const args: any[] = [file];
   appendStreamArg(args, options?.stream);
-  return MLXArray.fromHandle(addon.load(...args));
+  const result = addon.load(...args);
+  if (result.arrays) {
+    // Dictionary format (safetensors, gguf)
+    const wrappedArrays: Record<string, MLXArray> = {};
+    for (const [key, handle] of Object.entries(result.arrays)) {
+      wrappedArrays[key] = MLXArray.fromHandle(handle);
+    }
+    return wrappedArrays;
+  }
+  // Single array format (.npy, .npz)
+  return MLXArray.fromHandle(result);
+}
+
+export function load_safetensors(file: string, options?: StreamOptions): { arrays: Record<string, MLXArray>, metadata: Record<string, string> } {
+    const args: any[] = [file];
+    appendStreamArg(args, options?.stream);
+    const result = addon.load(...args);
+    const wrappedArrays: Record<string, MLXArray> = {};
+    for (const [key, handle] of Object.entries(result.arrays)) {
+      wrappedArrays[key] = MLXArray.fromHandle(handle);
+    }
+    return {
+        arrays: wrappedArrays,
+        metadata: result.metadata
+    };
+}
+
+export function load_gguf(file: string, options?: StreamOptions): { arrays: Record<string, MLXArray>, metadata: Record<string, any> } {
+    const args: any[] = [file];
+    appendStreamArg(args, options?.stream);
+    const result = addon.load(...args);
+    const wrappedArrays: Record<string, MLXArray> = {};
+    for (const [key, handle] of Object.entries(result.arrays)) {
+      wrappedArrays[key] = MLXArray.fromHandle(handle);
+    }
+    return {
+        arrays: wrappedArrays,
+        metadata: result.metadata
+    };
 }
 
 export function save(file: string, a: ScalarOrArray, options?: StreamOptions): void {
