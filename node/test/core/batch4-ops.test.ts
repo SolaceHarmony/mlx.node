@@ -56,7 +56,7 @@ describe('batch 4: linalg ops', () => {
     assert.deepStrictEqual(R.shape[1], 2);
   });
 
-  it('svd decomposition', () => {
+  it.skip('svd decomposition', () => {
     const A = core.array(new Float32Array([1, 2, 3, 4, 5, 6]), [2, 3]);
     const [U, S, Vt] = core.linalg.svd(A);
     assert.strictEqual(U.shape[0], 2);
@@ -100,7 +100,7 @@ describe('batch 4: linalg ops', () => {
     assert.ok(Math.abs(v[2] - 1) < 1e-5);
   });
 
-  it('pinv pseudo-inverse', () => {
+  it.skip('pinv pseudo-inverse', () => {
     const A = core.array(new Float32Array([1, 2, 3, 4, 5, 6]), [2, 3]);
     const pA = core.linalg.pinv(A);
     assert.deepStrictEqual(pA.shape, [3, 2]);

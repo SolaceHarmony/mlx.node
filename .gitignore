@@ -5,6 +5,26 @@ node/node_modules/
 node/dist/
 node/node/build/
 build/
+docs/build/
+tools/src/ASTDistance/build/
+tools/src/ASTDistance/typescript/dist/
+tools/src/ASTDistance/typescript/node_modules/
+tools/src/ASTDistance/.venv/
+tools/src/ASTDistance/python/build/
+tools/src/ASTDistance/python/dist/
+*.pyc
+__pycache__/
+.venv/
+*/.venv/
+node_modules/
+*/node_modules/
+
+# Generated reports and task files
+REPORT*.md
+node/REPORT*.md
+tasks_porting.json
+tasks_porting.json.lock
+.ast_distance_config.json
 
 # Python artifacts
 python/mlx.egg-info/

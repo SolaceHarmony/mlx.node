@@ -97,6 +97,7 @@ export type SupportedTypedArray =
 /** Normalise a shape array: finite non-negative integers only. */
 function normalizeShape(shape: readonly number[]): number[] {
   return shape.map((dim, i) => {
+    if (dim === -1) return -1;
     if (!Number.isFinite(dim) || dim < 0) {
       throw new RangeError(`Invalid shape dimension at axis ${i}: ${dim}`);
     }
@@ -162,6 +163,16 @@ export class MLXArray {
     return globalThis.Array.from(this.handle.shape() as number[]);
   }
 
+  /** The number of dimensions in the array. */
+  get ndim(): number {
+    return this.handle.shape().length;
+  }
+
+  /** The total number of elements in the array. */
+  get size(): number {
+    return this.handle.shape().reduce((a: number, b: number) => a * b, 1);
+  }
+
   /** The array's element dtype as a string key. */
   get dtype(): DType {
     return this.handle.dtype().key as DType;
@@ -211,6 +222,20 @@ export class MLXArray {
   }
 
   /**
+   * Cast the array to the given data type.
+   */
+  astype(dtype: DTypeLike, options?: { stream?: any }): MLXArray {
+    const d = (typeof dtype === 'string') ? dtype : (dtype as any).key;
+    const args: any[] = [this.handle, d];
+    if (options?.stream) {
+        // Direct addon call to avoid circular dependency with ops.ts
+        const { toNativeStreamArgument } = require('./stream');
+        args.push(toNativeStreamArgument(options.stream));
+    }
+    return MLXArray.fromHandle(addon.astype(...args));
+  }
+
+  /**
    * Materialise the tensor as a plain JS array.
    *
    * @remarks This allocates an intermediate TypedArray view (zero-copy) and
@@ -219,8 +244,22 @@ export class MLXArray {
    * to inspect raw numeric values.
    */
   toArray(): ArrayElement[] {
+    const shape = this.shape;
+    if (shape.length === 0) {
+      const data = this.toTypedArray();
+      if (this.dtype === 'bool') return [data[0] !== 0];
+      if (this.dtype === 'complex64') return [[(data as Float32Array)[0], (data as Float32Array)[1]]];
+      return [data[0] as number];
+    }
+    // Check if any dimension is zero
+    if (shape.some((d) => d === 0)) {
+      return [];
+    }
     const data = this.toTypedArray();
     switch (this.dtype) {
+      case 'float16':
+      case 'bfloat16':
+        return Array.from(this.astype('float32').toTypedArray() as Float32Array);
       case 'bool':
         return Array.from(data as Uint8Array, (v) => v !== 0);
       case 'complex64': {
@@ -276,10 +315,22 @@ export const normalizeShapeInput = (shape: readonly number[]): number[] =>
  */
 export function array(
   data: SupportedTypedArray | number | boolean | bigint,
-  shape?: readonly number[],
+  shapeOrDtype?: readonly number[] | DTypeLike,
   dtype?: DTypeLike,
 ): MLXArray {
-  const dtypeObj = toDtypeObject(dtype);
+  let resolvedShape: readonly number[] | undefined;
+  let resolvedDtype: DTypeLike | undefined;
+
+  if (Array.isArray(shapeOrDtype)) {
+    resolvedShape = shapeOrDtype;
+    resolvedDtype = dtype;
+  } else if (typeof shapeOrDtype === 'string' || (shapeOrDtype && typeof shapeOrDtype === 'object' && 'key' in (shapeOrDtype as any))) {
+    resolvedDtype = shapeOrDtype as DTypeLike;
+  } else {
+    resolvedDtype = dtype;
+  }
+
+  const dtypeObj = toDtypeObject(resolvedDtype);
 
   // Scalar path — passes directly to the C++ scalar constructor.
   if (
@@ -294,10 +345,10 @@ export function array(
 
   // TypedArray path — single memcpy from V8 backing-store into MLX malloc.
   if (isTypedArray(data)) {
-    const resolvedShape = shape !== undefined
-      ? normalizeShape([...shape])
+    const finalShape = resolvedShape !== undefined
+      ? normalizeShape([...resolvedShape])
       : [data.length];
-    const args: any[] = [data, resolvedShape];
+    const args: any[] = [data, finalShape];
     if (dtypeObj !== undefined) args.push(dtypeObj);
     return MLXArray.fromHandle(addon.array(...args));
   }
@@ -347,17 +398,17 @@ export function from_js_array(
       `for large tensors.`,
     );
   }
-  // Delegate to the C++ array() factory which handles number[] via
-  // ParseNestedNumberArray — no JS-side type coercion needed.
-  const args: any[] = [Array.from(data)];
-  if (shape !== undefined) {
-    // Provide explicit shape as second argument only when shapes differ from 1D.
-    // The C++ factory ignores the shape arg when it's an array.
-    args.push(normalizeShape([...shape]));
-  }
+  // Construct 1D array first, then reshape if needed.
   const dtypeObj = toDtypeObject(dtype);
+  const args: any[] = [Array.from(data)];
   if (dtypeObj !== undefined) args.push(dtypeObj);
-  return MLXArray.fromHandle(addon.array(...args));
+  let result = MLXArray.fromHandle(addon.array(...args));
+
+  if (shape !== undefined) {
+    const resolvedShape = normalizeShape([...shape]);
+    result = MLXArray.fromHandle(addon.reshape(result.toNative(), resolvedShape));
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------

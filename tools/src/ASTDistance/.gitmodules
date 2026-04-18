@@ -1,0 +1,3 @@
+[submodule "vendor/treelstm"]
+	path = vendor/treelstm
+	url = https://github.com/stanfordnlp/treelstm.git

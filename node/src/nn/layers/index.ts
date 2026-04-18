@@ -4,6 +4,8 @@
  * Mirrors mlx.nn.layers.__init__ from the Python MLX API.
  */
 
+export { Module } from './base';
+
 // Activations — functional
 export {
   sigmoid,
@@ -67,6 +69,9 @@ export { Identity, Linear, Bilinear } from './linear';
 
 // Convolution
 export { Conv1d, Conv2d, Conv3d } from './convolution';
+
+// Containers
+export { Sequential, ModuleList, ModuleDict } from './containers';
 
 // Dropout
 export { Dropout, Dropout2d, Dropout3d } from './dropout';

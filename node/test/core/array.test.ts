@@ -43,8 +43,8 @@ function assertAllClose(
 
 describe('TestDtypes', () => {
   it('dtype sizes', () => {
-    // Parity: mx.bool_.size == 1, etc.
-    assert.equal(mx.bool_.size, 1);
+    // Parity: mx.bool.size == 1, etc.
+    assert.equal(mx.bool.size, 1);
     assert.equal(mx.uint8.size, 1);
     assert.equal(mx.uint16.size, 2);
     assert.equal(mx.uint32.size, 4);
@@ -62,7 +62,7 @@ describe('TestDtypes', () => {
   it('dtype key strings', () => {
     // In Python: str(mx.bool_) == 'mlx.core.bool'
     // In Node: dtype.key gives the string like 'bool', 'uint8', etc.
-    assert.equal(mx.bool_.key, 'bool');
+    assert.equal(mx.bool.key, 'bool');
     assert.equal(mx.uint8.key, 'uint8');
     assert.equal(mx.uint16.key, 'uint16');
     assert.equal(mx.uint32.key, 'uint32');

@@ -232,7 +232,7 @@ export const {
   convolve,
   einsum_path,
   // Batch 5: eval + IO
-  eval: eval_op,
+  eval_op,
   async_eval,
   load,
   save,
@@ -244,7 +244,7 @@ export const {
   vjp,
   jvp,
   vmap,
-  compile: compile_fn,
+  compile_fn: compile,
   enable_compile,
   disable_compile,
   checkpoint,

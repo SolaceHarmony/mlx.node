@@ -1,5 +1,14 @@
-import MLXArray from '../core/array';
-import { random } from '../core/ops';
+import MLXArray, { full } from '../core/array';
+import {
+  random,
+  linalg,
+  where,
+  greater,
+  multiply,
+  sign,
+  diag,
+  slice,
+} from '../core/ops';
 
 /**
  * Type for initializer functions.
@@ -46,37 +55,6 @@ function _calculateFanInFanOut(x: MLXArray): [number, number] {
 
 /**
  * A He uniform (Kaiming uniform) initializer.
- *
- * This initializer samples from a uniform distribution with a range
- * computed from the number of input (fan_in) or output (fan_out)
- * units according to:
- *
- *     limit = gain * sqrt(3.0 / fan)
- *
- * where `fan` is either the number of input units when the
- * mode is "fan_in" or output units when the mode is "fan_out".
- *
- * For more details see the original reference:
- * "Delving Deep into Rectifiers: Surpassing Human-Level Performance on ImageNet Classification"
- * https://arxiv.org/abs/1502.01852
- *
- * @param dtype - The data type of the array. Default: float32.
- * @returns An initializer function that returns an array with the same shape
- *          as the input, filled with samples from the He uniform distribution.
- *
- * @example
- * ```typescript
- * import { nn, zeros } from 'mlx';
- *
- * // Create initializer
- * const initFn = nn.init.he_uniform();
- *
- * // Initialize a 2x2 weight matrix (uses fan_in by default)
- * const weights = initFn(zeros([2, 2]));
- *
- * // Initialize with fan_out mode and custom gain
- * const weights2 = initFn(zeros([2, 2]), 'fan_out', 5);
- * ```
  */
 export function he_uniform(dtype?: any): InitializerFunction {
   return (
@@ -104,26 +82,6 @@ export function he_uniform(dtype?: any): InitializerFunction {
 
 /**
  * A He normal initializer.
- *
- * This initializer samples from a normal distribution with a standard
- * deviation computed from the number of input (fan_in) or output
- * (fan_out) units according to:
- *
- *     std = gain / sqrt(fan)
- *
- * where `fan` is either the number of input units when the
- * mode is "fan_in" or output units when the mode is "fan_out".
- *
- * @param dtype - The data type of the array. Default: float32.
- * @returns An initializer function
- *
- * @example
- * ```typescript
- * import { nn, zeros } from 'mlx';
- *
- * const initFn = nn.init.he_normal();
- * const weights = initFn(zeros([2, 2]));
- * ```
  */
 export function he_normal(dtype?: any): InitializerFunction {
   return (
@@ -151,23 +109,6 @@ export function he_normal(dtype?: any): InitializerFunction {
 
 /**
  * A Glorot uniform initializer.
- *
- * This initializer samples from a uniform distribution with a range
- * computed from the number of input (fan_in) and output (fan_out)
- * units according to:
- *
- *     limit = gain * sqrt(6.0 / (fan_in + fan_out))
- *
- * @param dtype - The data type of the array. Default: float32.
- * @returns An initializer function
- *
- * @example
- * ```typescript
- * import { nn, zeros } from 'mlx';
- *
- * const initFn = nn.init.glorot_uniform();
- * const weights = initFn(zeros([2, 2]));
- * ```
  */
 export function glorot_uniform(dtype?: any): InitializerFunction {
   return (
@@ -182,23 +123,6 @@ export function glorot_uniform(dtype?: any): InitializerFunction {
 
 /**
  * A Glorot normal initializer.
- *
- * This initializer samples from a normal distribution with a standard
- * deviation computed from the number of input (fan_in) and output
- * (fan_out) units according to:
- *
- *     std = gain * sqrt(2.0 / (fan_in + fan_out))
- *
- * @param dtype - The data type of the array. Default: float32.
- * @returns An initializer function
- *
- * @example
- * ```typescript
- * import { nn, zeros } from 'mlx';
- *
- * const initFn = nn.init.glorot_normal();
- * const weights = initFn(zeros([2, 2]));
- * ```
  */
 export function glorot_normal(dtype?: any): InitializerFunction {
   return (
@@ -208,5 +132,80 @@ export function glorot_normal(dtype?: any): InitializerFunction {
     const [fanIn, fanOut] = _calculateFanInFanOut(a);
     const std = gain * Math.sqrt(2.0 / (fanIn + fanOut));
     return random.normal(a.shape, { scale: std, dtype });
+  };
+}
+
+/**
+ * An initializer that fills the array with a constant value.
+ *
+ * @param value - The constant value to fill the array with.
+ * @param dtype - The data type of the array.
+ * @returns An initializer function.
+ */
+export function constant(value: number, dtype?: any): InitializerFunction {
+  return (a: MLXArray): MLXArray => {
+    return full(a.shape, value, dtype);
+  };
+}
+
+/**
+ * An initializer that returns an orthogonal matrix.
+ *
+ * @param gain - Scaling factor for the orthogonal matrix.
+ * @param dtype - The data type of the array.
+ * @returns An initializer function.
+ */
+export function orthogonal(gain = 1.0, dtype?: any): InitializerFunction {
+  return (a: MLXArray): MLXArray => {
+    if (a.ndim !== 2) {
+      throw new Error(
+        `Orthogonal initialization requires a 2D array but got a ${a.ndim}D array.`
+      );
+    }
+
+    const [rows, cols] = a.shape;
+    const n = Math.max(rows, cols);
+
+    const rmat = random.normal([n, n], { dtype });
+
+    // Perform QR decomposition
+    const [q, r] = linalg.qr(rmat);
+
+    // Adjust the sign of Q using the diagonal of R
+    const d = diag(r);
+    let adjustedQ = multiply(q, sign(d));
+
+    // Slice Q to the desired shape
+    adjustedQ = slice(adjustedQ, [0, 0], [rows, cols]);
+
+    // Scale Q by gain
+    return multiply(adjustedQ, gain);
+  };
+}
+
+/**
+ * An initializer that returns a sparse matrix.
+ *
+ * @param sparsity - The fraction of elements in each column to be set to zero.
+ * @param std - Standard deviation of the normal distribution.
+ * @param dtype - The data type of the array.
+ * @returns An initializer function.
+ */
+export function sparse(
+  sparsity: number,
+  std = 0.01,
+  dtype?: any
+): InitializerFunction {
+  return (a: MLXArray): MLXArray => {
+    if (a.ndim !== 2) {
+      throw new Error(
+        `Sparse initialization requires a 2D array but got a ${a.ndim}D array.`
+      );
+    }
+
+    const cond = greater(random.uniform(0, 1, a.shape), sparsity);
+    const values = random.normal(a.shape, { scale: std, dtype: dtype });
+
+    return where(cond, values, full(a.shape, 0, dtype));
   };
 }

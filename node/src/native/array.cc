@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <iostream>
 #include <cstring>
 #include <memory>
 #include <numeric>
@@ -813,11 +814,16 @@ mlx::core::StreamOrDevice ParseStreamOrDeviceValue(
 
 mlx::core::StreamOrDevice GetStreamArgument(
     const Napi::CallbackInfo& info,
-    size_t index) {
-  if (info.Length() <= index) {
-    return {};
+    size_t startIdx) {
+  for (size_t i = startIdx; i < info.Length(); ++i) {
+    if (info[i].IsObject() && !info[i].IsArray() && !info[i].IsNull()) {
+        auto obj = info[i].As<Napi::Object>();
+        if (obj.Has("stream_id") || obj.Has("device")) {
+            return ParseStreamOrDeviceValue(info.Env(), info[i]);
+        }
+    }
   }
-  return ParseStreamOrDeviceValue(info.Env(), info[index]);
+  return {};
 }
 
 std::vector<int>
@@ -851,10 +857,13 @@ Napi::Object WrapArray(
     Napi::Env env,
     std::shared_ptr<mlx::core::array> tensor) {
   auto& data = mlx::node::GetAddonData(env);
-  auto external = Napi::External<std::shared_ptr<mlx::core::array>>::New(
+  auto holder = std::make_shared<mlx::bridge::ArrayHolder>(std::move(*tensor));
+  auto external = Napi::External<std::shared_ptr<mlx::bridge::ArrayHolder>>::New(
       env,
-      new std::shared_ptr<mlx::core::array>(std::move(tensor)),
-      [](Napi::Env, std::shared_ptr<mlx::core::array>* data) { delete data; });
+      new std::shared_ptr<mlx::bridge::ArrayHolder>(std::move(holder)),
+      [](Napi::Env, std::shared_ptr<mlx::bridge::ArrayHolder>* data) {
+        delete data;
+      });
   return data.array_constructor.New({external});
 }
 
@@ -1177,9 +1186,10 @@ Napi::Value ArrayFactory(const Napi::CallbackInfo& info) {
         return mlx::core::int64;
       double d = v.As<Napi::Number>().DoubleValue();
       double r = std::floor(d);
-      if (std::fabs(d - r) < 1e-12 &&
-          d >= std::numeric_limits<int32_t>::min() &&
-          d <= std::numeric_limits<int32_t>::max())
+      // Only treat as int32 if it's exactly equal to its floor AND within range.
+      if (d == r &&
+          d >= (double)std::numeric_limits<int32_t>::min() &&
+          d <= (double)std::numeric_limits<int32_t>::max())
         return mlx::core::int32;
       return mlx::core::float32;
     };
@@ -1621,20 +1631,11 @@ Napi::Value Arange(const Napi::CallbackInfo& info) {
 
   std::shared_ptr<mlx::core::array> out;
   try {
-    if (mlx::core::issubdtype(dtype, mlx::core::floating)) {
-      double start = two_positional ? to_f64(*start_v) : 0.0;
-      double stop = to_f64(stop_v);
-      double step = step_v ? to_f64(*step_v) : 1.0;
-      out = std::make_shared<mlx::core::array>(
-          mlx::core::arange(start, stop, step, dtype, streamArg));
-    } else {
-      int64_t start =
-          two_positional ? to_i64(*start_v) : static_cast<int64_t>(0);
-      int64_t stop = to_i64(stop_v);
-      int64_t step = step_v ? to_i64(*step_v) : static_cast<int64_t>(1);
-      out = std::make_shared<mlx::core::array>(
-          mlx::core::arange(start, stop, step, dtype, streamArg));
-    }
+    double start = two_positional ? to_f64(*start_v) : 0.0;
+    double stop = to_f64(stop_v);
+    double step = step_v ? to_f64(*step_v) : 1.0;
+    out = std::make_shared<mlx::core::array>(
+        mlx::core::arange(start, stop, step, dtype, streamArg));
   } catch (const std::exception& e) {
     Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
     return env.Null();
@@ -2046,7 +2047,9 @@ mlx::core::array ToArray(Napi::Env env, const Napi::Value& value) {
     auto ctor = data.array_constructor.Value();
     if (!ctor.IsEmpty() && obj.InstanceOf(ctor)) {
       auto* wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(obj);
-      return wrapper->tensor();
+      if (wrapper) {
+        return wrapper->tensor();
+      }
     }
   }
 
@@ -2161,17 +2164,17 @@ Napi::Value Matmul(const Napi::CallbackInfo& info) {
         .ThrowAsJavaScriptException();
     return env.Null();
   }
-  auto* a = UnwrapArray(env, info[0]);
-  auto* b = UnwrapArray(env, info[1]);
-  if (env.IsExceptionPending() || a == nullptr || b == nullptr) {
-    return env.Null();
-  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+  auto b = ToArray(env, info[1]);
+  if (env.IsExceptionPending()) return env.Null();
+
   auto streamArg = GetStreamArgument(info, 2);
   if (env.IsExceptionPending()) {
     return env.Null();
   }
   auto tensor = std::make_shared<mlx::core::array>(
-      mlx::core::matmul(a->tensor(), b->tensor(), streamArg));
+      mlx::core::matmul(a, b, streamArg));
   return WrapArray(env, tensor);
 }
 Napi::Value Where(const Napi::CallbackInfo& info) {
@@ -4639,6 +4642,30 @@ Napi::Value Pad(const Napi::CallbackInfo& info) {
 // ---------------------------------------------------------------------------
 // slice(a, start, stop, strides?, stream?) — extract a sub-array
 // ---------------------------------------------------------------------------
+Napi::Value Astype(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  auto* addon = static_cast<mlx::node::AddonData*>(info.Data());
+  if (info.Length() < 2) {
+    Napi::TypeError::New(env, "astype expects array and dtype")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  try {
+    auto a = ToArray(env, info[0]);
+    if (env.IsExceptionPending()) return env.Null();
+    auto dtype = MaybeParseDtype(env, info[1], mlx::core::float32, *addon);
+    if (env.IsExceptionPending()) return env.Null();
+    auto streamArg = GetStreamArgument(info, 2);
+    if (env.IsExceptionPending()) return env.Null();
+    return WrapArray(env,
+        std::make_shared<mlx::core::array>(
+            mlx::core::astype(a, dtype, streamArg)));
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
+}
+
 Napi::Value Slice(const Napi::CallbackInfo& info) {
   auto env = info.Env();
   if (info.Length() < 3) {
@@ -5458,8 +5485,8 @@ Napi::Value Sort(const Napi::CallbackInfo& info) {
   if (env.IsExceptionPending()) return env.Null();
   int axis = -1;
   size_t nextIdx = 1;
-  if (info.Length() > nextIdx && info[nextIdx].IsNumber()) {
-    axis = info[nextIdx].As<Napi::Number>().Int32Value();
+  if (info.Length() > nextIdx && (info[nextIdx].IsNumber() || info[nextIdx].IsBigInt())) {
+    axis = info[nextIdx].ToNumber().As<Napi::Number>().Int32Value();
     nextIdx++;
   }
   auto streamArg = GetStreamArgument(info, nextIdx);
@@ -5483,8 +5510,8 @@ Napi::Value ArgSort(const Napi::CallbackInfo& info) {
   if (env.IsExceptionPending()) return env.Null();
   int axis = -1;
   size_t nextIdx = 1;
-  if (info.Length() > nextIdx && info[nextIdx].IsNumber()) {
-    axis = info[nextIdx].As<Napi::Number>().Int32Value();
+  if (info.Length() > nextIdx && (info[nextIdx].IsNumber() || info[nextIdx].IsBigInt())) {
+    axis = info[nextIdx].ToNumber().As<Napi::Number>().Int32Value();
     nextIdx++;
   }
   auto streamArg = GetStreamArgument(info, nextIdx);
@@ -5681,11 +5708,13 @@ Napi::Value RandomRandint(const Napi::CallbackInfo& info) {
     nextIdx++;
   }
   std::optional<mlx::core::array> key = std::nullopt;
-  if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
-      !info[nextIdx].IsArray()) {
-    auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
-        info[nextIdx].As<Napi::Object>());
-    if (wrapper) { key = wrapper->tensor(); nextIdx++; }
+  if (info.Length() > nextIdx) {
+    if (info[nextIdx].IsObject() && !info[nextIdx].IsArray() && !info[nextIdx].IsNull()) {
+      auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+          info[nextIdx].As<Napi::Object>());
+      if (wrapper) { key = std::make_optional<mlx::core::array>(wrapper->tensor()); }
+    }
+    nextIdx++;
   }
   auto streamArg = GetStreamArgument(info, nextIdx);
   if (env.IsExceptionPending()) return env.Null();
@@ -5697,76 +5726,90 @@ Napi::Value RandomRandint(const Napi::CallbackInfo& info) {
 // random.categorical(logits, axis?, key?, stream?)
 Napi::Value RandomCategorical(const Napi::CallbackInfo& info) {
   auto env = info.Env();
+  auto addon = static_cast<mlx::node::AddonData*>(info.Data());
   if (info.Length() < 1) {
     Napi::TypeError::New(env, "random.categorical expects logits array")
         .ThrowAsJavaScriptException();
     return env.Null();
   }
-  auto logits = ToArray(env, info[0]);
-  if (env.IsExceptionPending()) return env.Null();
-  int axis = -1;
-  size_t nextIdx = 1;
-  if (info.Length() > nextIdx && info[nextIdx].IsNumber()) {
-    axis = info[nextIdx].As<Napi::Number>().Int32Value();
-    nextIdx++;
+  try {
+    auto logits = ToArray(env, info[0]);
+    if (env.IsExceptionPending()) return env.Null();
+    int axis = -1;
+    size_t nextIdx = 1;
+    if (info.Length() > nextIdx && (info[nextIdx].IsNumber() || info[nextIdx].IsBigInt())) {
+      axis = info[nextIdx].ToNumber().As<Napi::Number>().Int32Value();
+      nextIdx++;
+    }
+    std::optional<mlx::core::array> key = std::nullopt;
+    if (info.Length() > nextIdx) {
+      if (info[nextIdx].IsObject() && !info[nextIdx].IsArray() && !info[nextIdx].IsNull()) {
+        auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+            info[nextIdx].As<Napi::Object>());
+        if (wrapper) { key = std::make_optional<mlx::core::array>(wrapper->tensor()); }
+      }
+      nextIdx++;
+    }
+    auto streamArg = GetStreamArgument(info, nextIdx);
+    if (env.IsExceptionPending()) return env.Null();
+    auto result = mlx::core::random::categorical(logits, axis, key, streamArg);
+    return WrapArray(env, std::make_shared<mlx::core::array>(std::move(result)));
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
   }
-  std::optional<mlx::core::array> key = std::nullopt;
-  if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
-      !info[nextIdx].IsArray()) {
-    auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
-        info[nextIdx].As<Napi::Object>());
-    if (wrapper) { key = wrapper->tensor(); nextIdx++; }
-  }
-  auto streamArg = GetStreamArgument(info, nextIdx);
-  if (env.IsExceptionPending()) return env.Null();
-  return WrapArray(env,
-      std::make_shared<mlx::core::array>(
-          mlx::core::random::categorical(logits, axis, key, streamArg)));
 }
 
 // random.permutation(x_or_n, axis?, key?, stream?)
 Napi::Value RandomPermutation(const Napi::CallbackInfo& info) {
   auto env = info.Env();
+  auto addon = static_cast<mlx::node::AddonData*>(info.Data());
   if (info.Length() < 1) {
     Napi::TypeError::New(env, "random.permutation expects array or int")
         .ThrowAsJavaScriptException();
     return env.Null();
   }
-  size_t nextIdx = 1;
-  if (info[0].IsNumber()) {
-    int n = info[0].As<Napi::Number>().Int32Value();
+  try {
+    size_t nextIdx = 1;
+    if (info[0].IsNumber()) {
+      int n = info[0].As<Napi::Number>().Int32Value();
+      std::optional<mlx::core::array> key = std::nullopt;
+      if (info.Length() > nextIdx) {
+        if (info[nextIdx].IsObject() && !info[nextIdx].IsArray() && !info[nextIdx].IsNull()) {
+          auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+              info[nextIdx].As<Napi::Object>());
+          if (wrapper) { key = std::make_optional<mlx::core::array>(wrapper->tensor()); }
+        }
+        nextIdx++;
+      }
+      auto streamArg = GetStreamArgument(info, nextIdx);
+      if (env.IsExceptionPending()) return env.Null();
+      auto result = mlx::core::random::permutation(n, key, streamArg);
+      return WrapArray(env, std::make_shared<mlx::core::array>(std::move(result)));    }
+    auto x = ToArray(env, info[0]);
+    if (env.IsExceptionPending()) return env.Null();
+    int axis = 0;
+    if (info.Length() > nextIdx && (info[nextIdx].IsNumber() || info[nextIdx].IsBigInt())) {
+      axis = info[nextIdx].ToNumber().As<Napi::Number>().Int32Value();
+      nextIdx++;
+    }
     std::optional<mlx::core::array> key = std::nullopt;
-    if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
-        !info[nextIdx].IsArray()) {
-      auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
-          info[nextIdx].As<Napi::Object>());
-      if (wrapper) { key = wrapper->tensor(); nextIdx++; }
+    if (info.Length() > nextIdx) {
+      if (info[nextIdx].IsObject() && !info[nextIdx].IsArray() && !info[nextIdx].IsNull()) {
+        auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+            info[nextIdx].As<Napi::Object>());
+        if (wrapper) { key = std::make_optional<mlx::core::array>(wrapper->tensor()); }
+      }
+      nextIdx++;
     }
     auto streamArg = GetStreamArgument(info, nextIdx);
     if (env.IsExceptionPending()) return env.Null();
-    return WrapArray(env,
-        std::make_shared<mlx::core::array>(
-            mlx::core::random::permutation(n, key, streamArg)));
+    auto result = mlx::core::random::permutation(x, axis, key, streamArg);
+    return WrapArray(env, std::make_shared<mlx::core::array>(std::move(result)));
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
   }
-  auto x = ToArray(env, info[0]);
-  if (env.IsExceptionPending()) return env.Null();
-  int axis = 0;
-  if (info.Length() > nextIdx && info[nextIdx].IsNumber()) {
-    axis = info[nextIdx].As<Napi::Number>().Int32Value();
-    nextIdx++;
-  }
-  std::optional<mlx::core::array> key = std::nullopt;
-  if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
-      !info[nextIdx].IsArray()) {
-    auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
-        info[nextIdx].As<Napi::Object>());
-    if (wrapper) { key = wrapper->tensor(); nextIdx++; }
-  }
-  auto streamArg = GetStreamArgument(info, nextIdx);
-  if (env.IsExceptionPending()) return env.Null();
-  return WrapArray(env,
-      std::make_shared<mlx::core::array>(
-          mlx::core::random::permutation(x, axis, key, streamArg)));
 }
 
 // random.gumbel(shape, dtype?, key?, stream?)
@@ -5788,11 +5831,13 @@ Napi::Value RandomGumbel(const Napi::CallbackInfo& info) {
     nextIdx++;
   }
   std::optional<mlx::core::array> key = std::nullopt;
-  if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
-      !info[nextIdx].IsArray()) {
-    auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
-        info[nextIdx].As<Napi::Object>());
-    if (wrapper) { key = wrapper->tensor(); nextIdx++; }
+  if (info.Length() > nextIdx) {
+    if (info[nextIdx].IsObject() && !info[nextIdx].IsArray() && !info[nextIdx].IsNull()) {
+      auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+          info[nextIdx].As<Napi::Object>());
+      if (wrapper) { key = std::make_optional<mlx::core::array>(wrapper->tensor()); }
+    }
+    nextIdx++;
   }
   auto streamArg = GetStreamArgument(info, nextIdx);
   if (env.IsExceptionPending()) return env.Null();
@@ -5820,11 +5865,13 @@ Napi::Value RandomLaplace(const Napi::CallbackInfo& info) {
     nextIdx++;
   }
   std::optional<mlx::core::array> key = std::nullopt;
-  if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
-      !info[nextIdx].IsArray()) {
-    auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
-        info[nextIdx].As<Napi::Object>());
-    if (wrapper) { key = wrapper->tensor(); nextIdx++; }
+  if (info.Length() > nextIdx) {
+    if (info[nextIdx].IsObject() && !info[nextIdx].IsArray() && !info[nextIdx].IsNull()) {
+      auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+          info[nextIdx].As<Napi::Object>());
+      if (wrapper) { key = std::make_optional<mlx::core::array>(wrapper->tensor()); }
+    }
+    nextIdx++;
   }
   auto streamArg = GetStreamArgument(info, nextIdx);
   if (env.IsExceptionPending()) return env.Null();
@@ -5880,11 +5927,13 @@ Napi::Value RandomTruncatedNormal(const Napi::CallbackInfo& info) {
     nextIdx++;
   }
   std::optional<mlx::core::array> key = std::nullopt;
-  if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
-      !info[nextIdx].IsArray()) {
-    auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
-        info[nextIdx].As<Napi::Object>());
-    if (wrapper) { key = wrapper->tensor(); nextIdx++; }
+  if (info.Length() > nextIdx) {
+    if (info[nextIdx].IsObject() && !info[nextIdx].IsArray() && !info[nextIdx].IsNull()) {
+      auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+          info[nextIdx].As<Napi::Object>());
+      if (wrapper) { key = std::make_optional<mlx::core::array>(wrapper->tensor()); }
+    }
+    nextIdx++;
   }
   auto streamArg = GetStreamArgument(info, nextIdx);
   if (env.IsExceptionPending()) return env.Null();
@@ -5917,11 +5966,13 @@ Napi::Value RandomMultivariateNormal(const Napi::CallbackInfo& info) {
     nextIdx++;
   }
   std::optional<mlx::core::array> key = std::nullopt;
-  if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
-      !info[nextIdx].IsArray()) {
-    auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
-        info[nextIdx].As<Napi::Object>());
-    if (wrapper) { key = wrapper->tensor(); nextIdx++; }
+  if (info.Length() > nextIdx) {
+    if (info[nextIdx].IsObject() && !info[nextIdx].IsArray() && !info[nextIdx].IsNull()) {
+      auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+          info[nextIdx].As<Napi::Object>());
+      if (wrapper) { key = std::make_optional<mlx::core::array>(wrapper->tensor()); }
+    }
+    nextIdx++;
   }
   auto streamArg = GetStreamArgument(info, nextIdx);
   if (env.IsExceptionPending()) return env.Null();
@@ -8752,6 +8803,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   core.Set("take_along_axis", Napi::Function::New(env, TakeAlongAxis, "take_along_axis", &data));
   core.Set("pad", Napi::Function::New(env, Pad, "pad", &data));
   core.Set("slice", Napi::Function::New(env, Slice, "slice", &data));
+  core.Set("astype", Napi::Function::New(env, Astype, "astype", &data));
   core.Set("as_strided", Napi::Function::New(env, AsStrided, "as_strided", &data));
   core.Set("number_of_elements", Napi::Function::New(env, NumberOfElements, "number_of_elements", &data));
 
@@ -8874,7 +8926,8 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
 
   // Additional reduction ops
   core.Set("var", Napi::Function::New(env, Var, "var", &data));
-  core.Set("std", Napi::Function::New(env, Std, "std", &data));
+  core.Set("variance", Napi::Function::New(env, Var, "variance", &data));
+  core.Set("norm", Napi::Function::New(env, Norm, "norm", &data));
   core.Set("trace", Napi::Function::New(env, Trace, "trace", &data));
 
   // NN init functions

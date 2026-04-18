@@ -57,8 +57,8 @@ export {
   tanh,
 } from './layers';
 
-// Module classes
 export {
+  Module,
   Sigmoid,
   Mish,
   ReLU,
@@ -90,6 +90,9 @@ export {
   Identity,
   Linear,
   Bilinear,
+  Sequential,
+  ModuleList,
+  ModuleDict,
   Dropout,
   Dropout2d,
   Dropout3d,

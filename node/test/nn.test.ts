@@ -560,8 +560,15 @@ describe('TestLayers', () => {
     // NOTE: Sequential is not yet exported; once it is, these tests activate.
     // Python: m = nn.Sequential(nn.Linear(2, 10), nn.ReLU(), nn.Linear(10, 1))
     //         y = m(mx.ones((10, 2))); y.shape == (10, 1)
-    it.skip('Sequential forward pass shape', () => {
-      // TODO: expose Sequential from nn/index.ts
+    it('Sequential forward pass shape', () => {
+      const model = new nn.Sequential(
+        new nn.Linear(2, 10),
+        new nn.ReLU(),
+        new nn.Linear(10, 1)
+      );
+      const x = ones([5, 2]);
+      const y = model.forward(x);
+      assert.deepEqual(y.shape, [5, 1]);
     });
   });
 

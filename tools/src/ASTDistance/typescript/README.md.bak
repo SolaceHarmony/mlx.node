@@ -1,0 +1,211 @@
+# AST Distance TypeScript - NPM Package
+
+Cross-language AST similarity measurement and porting analysis tool.
+
+[![npm version](https://img.shields.io/npm/v/@ast-distance/typescript)](https://www.npmjs.com/package/@ast-distance/typescript)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+## Installation
+
+```bash
+npm install @ast-distance/typescript
+```
+
+## Features
+
+- **Tree-sitter parsing** for TypeScript ASTs
+- **Normalized node types** mapping across languages
+- **Multiple similarity metrics**:
+  - Cosine similarity of node type histograms
+  - Structure similarity (size, depth)
+  - Jaccard similarity of node sets
+  - Combined weighted score
+- **Codebase-level analysis**:
+  - Dependency graph building
+  - File matching by port-lint headers or name similarity
+  - Porting priority ranking
+  - Documentation gap detection
+- **Quality checks**:
+  - TODO scanning with context
+  - Lint error detection
+  - Stub file identification
+
+## Usage
+
+### Command Line
+
+```bash
+# Compare two files
+ast-distance <file1> <lang1> <file2> <lang2>
+
+# Dump AST structure
+ast-distance dump <file> <lang>
+
+# Scan directory
+ast-distance scan <directory> <lang>
+
+# Deep codebase analysis
+ast-distance deep <src_dir> <src_lang> <tgt_dir> <tgt_lang>
+
+# Find missing files
+ast-distance missing <src_dir> <src_lang> <tgt_dir> <tgt_lang>
+
+# Scan for TODOs
+ast-distance todos <directory>
+```
+
+### Programmatically
+
+```typescript
+import {
+  parseFile,
+  computeSimilarity,
+  printSimilarityReport,
+  parseDirectory,
+  buildDepGraph,
+  rankPortingPriority,
+  Language
+} from '@ast-distance/typescript';
+
+// Compare two files
+const result1 = await parseFile('source.ts', Language.TYPESCRIPT);
+const result2 = await parseFile('target.rs', Language.RUST);
+
+const metrics = computeSimilarity(result1, result2);
+console.log(`Combined similarity: ${metrics.combined}`);
+
+// Analyze codebase
+const files = parseDirectory('./src', Language.TYPESCRIPT);
+const depGraph = buildDepGraph(files);
+const rankings = rankPortingPriority(srcFiles, tgtFiles, depGraph);
+```
+
+## Port-Lint Headers
+
+Add port-lint headers to enable accurate source tracking:
+
+```typescript
+// port-lint: source core/src/config.rs
+namespace magentic.config {
+  export class Config { ... }
+}
+```
+
+This enables:
+- Exact file matching (no heuristics needed)
+- Documentation coverage comparison
+- Higher similarity confidence
+
+## Example Output
+
+### File Comparison
+```
+=== AST Similarity Report ===
+File 1: source.ts (TypeScript)
+  Tree size: 142, depth: 7
+
+File 2: target.rs (Rust)
+  Tree size: 156, depth: 9
+
+Similarity Metrics:
+  Cosine (histogram):    0.92
+  Structure:             0.86
+  Jaccard:               0.89
+  Combined Score:        0.89
+
+=== Documentation Comparison ===
+  Doc count:    5 vs 4 (diff: -1)
+  Doc lines:    24 vs 18 (diff: -6)
+  Doc cosine:   87.42%
+```
+
+### Deep Analysis
+```
+=== Porting Quality Summary ===
+
+Matched by header:    87 / 95
+Matched by name:      8 / 95
+Total TODOs in target: 42
+Total lint errors:    287
+
+=== Porting Priorities (Top 10) ===
+  12 dependents  core/src/config.rs
+  9 dependents   core/src/engine.rs
+  7 dependents   core/src/parser.rs
+```
+
+## Supported Languages
+
+- **TypeScript** (`.ts`, `.tsx`, `.mts`, `.cts`) ✅
+- **Rust** (`.rs`) 🔶 (parser integration pending)
+- **Kotlin** (`.kt`, `.kts`) 🔶 (parser integration pending)
+- **C++** (`.cpp`, `.hpp`, `.cc`, `.h`) 🔶 (parser integration pending)
+
+## API Reference
+
+### Main Exports
+
+```typescript
+// Parsing
+parseFile(filePath: string, language: Language): ParseResult | null
+parseString(source: string, language: Language, filename?: string): ParseResult | null
+
+// Similarity
+computeSimilarity(result1: ParseResult, result2: ParseResult): SimilarityMetrics
+docCosineSimilarity(freq1: Map<string, number>, freq2: Map<string, number>): number
+compareDocumentation(result1: ParseResult, result2: ParseResult): DocumentationComparison
+
+// Codebase Analysis
+parseDirectory(dirPath: string, language: Language, extensions?: string[]): Map<string, FileEntry>
+buildDepGraph(files: Map<string, FileEntry>): DepGraph
+rankPortingPriority(srcFiles: Map<string, FileEntry>, tgtFiles: Map<string, FileEntry>, depGraph: DepGraph): Array<{path: string, priority: number, dependents: number}>
+findMissingFiles(srcFiles: Map<string, FileEntry>, tgtFiles: Map<string, FileEntry>): Array<{path: string, matchedBy: 'header' | 'name' | 'none', priority: number}>
+printCodebaseStats(files: Map<string, FileEntry>): void
+
+// Utilities
+printSimilarityReport(result1: ParseResult, result2: ParseResult): void
+formatSimilarity(value: number): string
+```
+
+## TypeScript Support
+
+The TypeScript version provides the same core functionality as the C++ implementation:
+- ✅ AST parsing with tree-sitter
+- ✅ Similarity metrics computation
+- ✅ Dependency graph building
+- ✅ Codebase scanning and analysis
+- ✅ Port-lint header support
+- ✅ CLI with all commands
+- ✅ Full TypeScript types
+- ✅ ESM module support
+
+## Use Cases
+
+### 1. Port Verification
+Measure how accurately target code matches source code.
+
+### 2. Prioritization
+Identify the most important files by dependency count.
+
+### 3. Gap Detection
+Find files missing from target implementation.
+
+### 4. Quality Tracking
+Monitor TODO counts and stub files.
+
+### 5. Documentation Audit
+Compare doc coverage between implementations.
+
+## License
+
+MIT
+
+## Contributing
+
+Contributions welcome! Please see the main [ASTDistance repository](https://github.com/your-repo/ASTDistance) for guidelines.
+
+## See Also
+
+- [C++ Implementation](https://github.com/your-repo/ASTDistance)
+- [Documentation](https://github.com/your-repo/ASTDistance#readme)
+- [Examples](https://github.com/your-repo/ASTDistance/tree/main/examples)

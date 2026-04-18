@@ -13,6 +13,7 @@ import {
   maximum,
 } from '../../core/ops';
 import MLXArray from '../../core/array';
+import { Module } from './base';
 
 /**
  * Helper: Sliding window view using as_strided.
@@ -65,7 +66,11 @@ function slidingWindows(
   // Channel stride
   outStrides.push(1);
 
-  return as_strided(x, outShape, outStrides, 0);
+  // Ensure all values are numbers before passing to as_strided
+  const finalShape = outShape.map(v => isNaN(v) ? 0 : v);
+  const finalStrides = outStrides.map(v => isNaN(v) ? 0 : v);
+
+  return as_strided(x, finalShape, finalStrides, 0);
 }
 
 /** Helper to select index i along the second-to-last axis */
@@ -104,12 +109,13 @@ function sliceAxis4(x: MLXArray, idx: number): MLXArray {
  * @param stride - Pooling stride (default: kernelSize)
  * @param padding - Padding (default: 0)
  */
-export class MaxPool1d {
+export class MaxPool1d extends Module {
   kernelSize: number;
   stride: number;
   padding: number;
 
   constructor(kernelSize: number, stride?: number, padding: number = 0) {
+    super();
     this.kernelSize = kernelSize;
     this.stride = stride ?? kernelSize;
     this.padding = padding;
@@ -133,6 +139,10 @@ export class MaxPool1d {
     }
     return result;
   }
+
+  __call__(x: MLXArray): MLXArray {
+    return this.forward(x);
+  }
 }
 
 /**
@@ -144,12 +154,13 @@ export class MaxPool1d {
  * @param stride - Pooling stride (default: kernelSize)
  * @param padding - Padding (default: 0)
  */
-export class AvgPool1d {
+export class AvgPool1d extends Module {
   kernelSize: number;
   stride: number;
   padding: number;
 
   constructor(kernelSize: number, stride?: number, padding: number = 0) {
+    super();
     this.kernelSize = kernelSize;
     this.stride = stride ?? kernelSize;
     this.padding = padding;
@@ -167,6 +178,10 @@ export class AvgPool1d {
     const flat = reshape(windows, [shape[0], shape[1], this.kernelSize, shape[shape.length - 1]]);
     return mean(flat, 2);
   }
+
+  __call__(x: MLXArray): MLXArray {
+    return this.forward(x);
+  }
 }
 
 /**
@@ -178,7 +193,7 @@ export class AvgPool1d {
  * @param stride - Pooling stride (default: kernelSize)
  * @param padding - Padding (default: 0)
  */
-export class MaxPool2d {
+export class MaxPool2d extends Module {
   kernelSize: [number, number];
   stride: [number, number];
   padding: [number, number];
@@ -188,6 +203,7 @@ export class MaxPool2d {
     stride?: number | [number, number],
     padding: number | [number, number] = 0,
   ) {
+    super();
     this.kernelSize = typeof kernelSize === 'number' ? [kernelSize, kernelSize] : kernelSize;
     const s = stride ?? kernelSize;
     this.stride = typeof s === 'number' ? [s, s] : s;
@@ -212,6 +228,10 @@ export class MaxPool2d {
     }
     return result;
   }
+
+  __call__(x: MLXArray): MLXArray {
+    return this.forward(x);
+  }
 }
 
 /**
@@ -223,7 +243,7 @@ export class MaxPool2d {
  * @param stride - Pooling stride (default: kernelSize)
  * @param padding - Padding (default: 0)
  */
-export class AvgPool2d {
+export class AvgPool2d extends Module {
   kernelSize: [number, number];
   stride: [number, number];
   padding: [number, number];
@@ -233,6 +253,7 @@ export class AvgPool2d {
     stride?: number | [number, number],
     padding: number | [number, number] = 0,
   ) {
+    super();
     this.kernelSize = typeof kernelSize === 'number' ? [kernelSize, kernelSize] : kernelSize;
     const s = stride ?? kernelSize;
     this.stride = typeof s === 'number' ? [s, s] : s;
@@ -249,6 +270,10 @@ export class AvgPool2d {
     const flat = reshape(windows, [s[0], s[1], s[2], s[3] * s[4], s[5]]);
     return mean(flat, 3);
   }
+
+  __call__(x: MLXArray): MLXArray {
+    return this.forward(x);
+  }
 }
 
 /**
@@ -260,7 +285,7 @@ export class AvgPool2d {
  * @param stride - Pooling stride (default: kernelSize)
  * @param padding - Padding (default: 0)
  */
-export class MaxPool3d {
+export class MaxPool3d extends Module {
   kernelSize: [number, number, number];
   stride: [number, number, number];
   padding: [number, number, number];
@@ -270,6 +295,7 @@ export class MaxPool3d {
     stride?: number | [number, number, number],
     padding: number | [number, number, number] = 0,
   ) {
+    super();
     this.kernelSize = typeof kernelSize === 'number' ? [kernelSize, kernelSize, kernelSize] : kernelSize;
     const s = stride ?? kernelSize;
     this.stride = typeof s === 'number' ? [s, s, s] : s;
@@ -295,6 +321,10 @@ export class MaxPool3d {
     }
     return result;
   }
+
+  __call__(x: MLXArray): MLXArray {
+    return this.forward(x);
+  }
 }
 
 /**
@@ -306,7 +336,7 @@ export class MaxPool3d {
  * @param stride - Pooling stride (default: kernelSize)
  * @param padding - Padding (default: 0)
  */
-export class AvgPool3d {
+export class AvgPool3d extends Module {
   kernelSize: [number, number, number];
   stride: [number, number, number];
   padding: [number, number, number];
@@ -316,6 +346,7 @@ export class AvgPool3d {
     stride?: number | [number, number, number],
     padding: number | [number, number, number] = 0,
   ) {
+    super();
     this.kernelSize = typeof kernelSize === 'number' ? [kernelSize, kernelSize, kernelSize] : kernelSize;
     const s = stride ?? kernelSize;
     this.stride = typeof s === 'number' ? [s, s, s] : s;
@@ -332,5 +363,9 @@ export class AvgPool3d {
     const winSize = s[4] * s[5] * s[6];
     const flat = reshape(windows, [s[0], s[1], s[2], s[3], winSize, s[7]]);
     return mean(flat, 4);
+  }
+
+  __call__(x: MLXArray): MLXArray {
+    return this.forward(x);
   }
 }

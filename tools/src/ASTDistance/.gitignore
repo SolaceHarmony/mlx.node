@@ -1,0 +1,17 @@
+build/
+.cache/
+.venv/
+REPORT*.md
+compile_commands.json
+*.o
+*.a
+*.so
+*.dylib
+.DS_Store
+.idea/
+*.swp
+*~
+*.pyc
+*.egg-info/
+typescript/dist/
+typescript/node_modules/

@@ -14,15 +14,22 @@ import {
   random,
 } from '../../core/ops';
 import MLXArray from '../../core/array';
+import { Module } from './base';
 
 /**
  * A placeholder identity layer that returns its input unchanged.
  */
-export class Identity {
-  constructor(..._args: any[]) {}
+export class Identity extends Module {
+  constructor(..._args: any[]) {
+    super();
+  }
 
   forward(x: MLXArray): MLXArray {
     return x;
+  }
+
+  __call__(x: MLXArray): MLXArray {
+    return this.forward(x);
   }
 }
 
@@ -33,11 +40,12 @@ export class Identity {
  * @param outputDims - Number of output features
  * @param bias - Whether to include a bias term (default true)
  */
-export class Linear {
+export class Linear extends Module {
   weight: MLXArray;
   bias?: MLXArray;
 
   constructor(inputDims: number, outputDims: number, bias: boolean = true) {
+    super();
     const scale = Math.sqrt(1.0 / inputDims);
     this.weight = random.uniform(-scale, scale, [outputDims, inputDims]);
     if (bias) {
@@ -52,6 +60,10 @@ export class Linear {
     }
     return matmul(x, transpose(this.weight));
   }
+
+  __call__(x: MLXArray): MLXArray {
+    return this.forward(x);
+  }
 }
 
 /**
@@ -62,7 +74,7 @@ export class Linear {
  * @param outputDims - Number of output features
  * @param bias - Whether to include a bias term (default true)
  */
-export class Bilinear {
+export class Bilinear extends Module {
   weight: MLXArray;
   bias?: MLXArray;
 
@@ -72,6 +84,7 @@ export class Bilinear {
     outputDims: number,
     bias: boolean = true,
   ) {
+    super();
     const scale = Math.sqrt(1.0 / input1Dims);
     this.weight = random.uniform(-scale, scale, [outputDims, input2Dims, input1Dims]);
     if (bias) {
@@ -102,5 +115,9 @@ export class Bilinear {
       y = add(y, this.bias);
     }
     return y;
+  }
+
+  __call__(x1: MLXArray, x2: MLXArray): MLXArray {
+    return this.forward(x1, x2);
   }
 }

@@ -29,7 +29,7 @@ import {
   less,
   where,
   expand_dims,
-  linalg,
+  norm,
 } from '../core/ops';
 
 export type Reduction = 'none' | 'mean' | 'sum';
@@ -424,8 +424,8 @@ export function cosine_similarity_loss(
   const eps = options?.eps ?? 1e-8;
   const reduction = options?.reduction ?? 'none';
 
-  const x1Norm = linalg.norm(x1, null, axis);
-  const x2Norm = linalg.norm(x2, null, axis);
+  const x1Norm = norm(x1, 2, axis);
+  const x2Norm = norm(x2, 2, axis);
 
   const loss = divide(
     sum(multiply(x1, x2), axis),

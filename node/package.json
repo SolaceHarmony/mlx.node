@@ -5,8 +5,10 @@
   "main": "index.js",
   "license": "MIT",
   "scripts": {
-    "build": "npm run build:native",
+    "build": "npm run build:native && npm run report",
     "build:native": "npx node-gyp configure build",
+    "report": "node ../tools/src/ASTDistance/typescript/dist/cli.js deep ../python/mlx python ./src typescript > REPORT.md",
+    "report:cpp": "node ../tools/src/ASTDistance/typescript/dist/cli.js deep ../mlx cpp ./src/native cpp > REPORT_CPP.md",
     "test": "npx mocha --require tsx --extension ts \"test/core/*.test.ts\" \"test/*.test.ts\"",
     "ci": "npm run build:native && npm test",
     "prepack": "npm run build:native",

@@ -116,7 +116,7 @@ export abstract class Optimizer {
 
     // Increment the step counter (stored as uint64 scalar)
     const currentStep = Number(this.step.toTypedArray()[0]);
-    this._state.step = array([currentStep + 1], [], 'uint64');
+    this._state.step = array(currentStep + 1, 'uint64');
 
     // Apply the per-parameter update using the per-param state tree.
     const paramState = this._state._params;

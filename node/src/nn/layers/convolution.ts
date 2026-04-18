@@ -10,7 +10,8 @@ import {
   conv2d as coreConv2d,
   conv3d as coreConv3d,
 } from '../../core/ops';
-import MLXArray, { zeros } from '../../core/array';
+import MLXArray from '../../core/array';
+import { Module } from './base';
 
 /**
  * Applies a 1-dimensional convolution over a multi-channel input sequence.
@@ -26,7 +27,7 @@ import MLXArray, { zeros } from '../../core/array';
  * @param groups - Number of groups (default 1)
  * @param bias - Whether to include a bias (default true)
  */
-export class Conv1d {
+export class Conv1d extends Module {
   weight: MLXArray;
   bias?: MLXArray;
   padding: number;
@@ -44,32 +45,39 @@ export class Conv1d {
     groups: number = 1,
     bias: boolean = true,
   ) {
+    super();
     if (inChannels % groups !== 0) {
       throw new Error(
         `The number of input channels (${inChannels}) must be divisible by the number of groups (${groups})`,
       );
     }
 
-    const scale = Math.sqrt(1 / (inChannels * kernelSize));
-    this.weight = random.uniform(
-      -scale, scale,
-      [outChannels, kernelSize, Math.floor(inChannels / groups)],
-    );
+    const scale = Math.sqrt(1.0 / (inChannels * kernelSize));
+    this.weight = random.uniform(-scale, scale, [
+      outChannels,
+      kernelSize,
+      inChannels / groups,
+    ]);
     if (bias) {
-      this.bias = zeros([outChannels]);
+      this.bias = random.uniform(-scale, scale, [outChannels]);
     }
+
     this.padding = padding;
-    this.dilation = dilation;
     this.stride = stride;
+    this.dilation = dilation;
     this.groups = groups;
   }
 
   forward(x: MLXArray): MLXArray {
     let y = coreConv1d(x, this.weight, this.stride, this.padding, this.dilation, this.groups);
-    if (this.bias !== undefined) {
+    if (this.bias) {
       y = add(y, this.bias);
     }
     return y;
+  }
+
+  __call__(x: MLXArray): MLXArray {
+    return this.forward(x);
   }
 }
 
@@ -80,19 +88,19 @@ export class Conv1d {
  *
  * @param inChannels - Number of input channels
  * @param outChannels - Number of output channels
- * @param kernelSize - Kernel size (int or [h, w])
+ * @param kernelSize - Size of the convolution filter ([height, width] or single number)
  * @param stride - Stride (default 1)
  * @param padding - Padding (default 0)
  * @param dilation - Dilation (default 1)
  * @param groups - Number of groups (default 1)
  * @param bias - Whether to include a bias (default true)
  */
-export class Conv2d {
+export class Conv2d extends Module {
   weight: MLXArray;
   bias?: MLXArray;
   padding: [number, number];
-  stride: [number, number];
   dilation: [number, number];
+  stride: [number, number];
   groups: number;
 
   constructor(
@@ -105,34 +113,45 @@ export class Conv2d {
     groups: number = 1,
     bias: boolean = true,
   ) {
+    super();
     if (inChannels % groups !== 0) {
       throw new Error(
         `The number of input channels (${inChannels}) must be divisible by the number of groups (${groups})`,
       );
     }
 
-    const ks: [number, number] = typeof kernelSize === 'number' ? [kernelSize, kernelSize] : kernelSize;
-    this.stride = typeof stride === 'number' ? [stride, stride] : stride;
-    this.padding = typeof padding === 'number' ? [padding, padding] : padding;
-    this.dilation = typeof dilation === 'number' ? [dilation, dilation] : dilation;
-    this.groups = groups;
+    const k = Array.isArray(kernelSize) ? kernelSize : [kernelSize, kernelSize];
+    const s = Array.isArray(stride) ? stride : [stride, stride];
+    const p = Array.isArray(padding) ? padding : [padding, padding];
+    const d = Array.isArray(dilation) ? dilation : [dilation, dilation];
 
-    const scale = Math.sqrt(1 / (inChannels * ks[0] * ks[1]));
-    this.weight = random.uniform(
-      -scale, scale,
-      [outChannels, ks[0], ks[1], Math.floor(inChannels / groups)],
-    );
+    const scale = Math.sqrt(1.0 / (inChannels * k[0] * k[1]));
+    this.weight = random.uniform(-scale, scale, [
+      outChannels,
+      k[0],
+      k[1],
+      inChannels / groups,
+    ]);
     if (bias) {
-      this.bias = zeros([outChannels]);
+      this.bias = random.uniform(-scale, scale, [outChannels]);
     }
+
+    this.padding = p as any;
+    this.stride = s as any;
+    this.dilation = d as any;
+    this.groups = groups;
   }
 
   forward(x: MLXArray): MLXArray {
     let y = coreConv2d(x, this.weight, this.stride, this.padding, this.dilation, this.groups);
-    if (this.bias !== undefined) {
+    if (this.bias) {
       y = add(y, this.bias);
     }
     return y;
+  }
+
+  __call__(x: MLXArray): MLXArray {
+    return this.forward(x);
   }
 }
 
@@ -143,18 +162,20 @@ export class Conv2d {
  *
  * @param inChannels - Number of input channels
  * @param outChannels - Number of output channels
- * @param kernelSize - Kernel size (int or [d, h, w])
+ * @param kernelSize - Size of the convolution filter ([depth, height, width] or single number)
  * @param stride - Stride (default 1)
  * @param padding - Padding (default 0)
  * @param dilation - Dilation (default 1)
+ * @param groups - Number of groups (default 1)
  * @param bias - Whether to include a bias (default true)
  */
-export class Conv3d {
+export class Conv3d extends Module {
   weight: MLXArray;
   bias?: MLXArray;
   padding: [number, number, number];
-  stride: [number, number, number];
   dilation: [number, number, number];
+  stride: [number, number, number];
+  groups: number;
 
   constructor(
     inChannels: number,
@@ -163,29 +184,52 @@ export class Conv3d {
     stride: number | [number, number, number] = 1,
     padding: number | [number, number, number] = 0,
     dilation: number | [number, number, number] = 1,
+    groups: number = 1,
     bias: boolean = true,
   ) {
-    const ks: [number, number, number] = typeof kernelSize === 'number'
-      ? [kernelSize, kernelSize, kernelSize] : kernelSize;
-    this.stride = typeof stride === 'number' ? [stride, stride, stride] : stride;
-    this.padding = typeof padding === 'number' ? [padding, padding, padding] : padding;
-    this.dilation = typeof dilation === 'number' ? [dilation, dilation, dilation] : dilation;
-
-    const scale = Math.sqrt(1 / (inChannels * ks[0] * ks[1] * ks[2]));
-    this.weight = random.uniform(
-      -scale, scale,
-      [outChannels, ks[0], ks[1], ks[2], inChannels],
-    );
-    if (bias) {
-      this.bias = zeros([outChannels]);
+    super();
+    if (inChannels % groups !== 0) {
+      throw new Error(
+        `The number of input channels (${inChannels}) must be divisible by the number of groups (${groups})`,
+      );
     }
+
+    const k = Array.isArray(kernelSize)
+      ? kernelSize
+      : [kernelSize, kernelSize, kernelSize];
+    const s = Array.isArray(stride) ? stride : [stride, stride, stride];
+    const p = Array.isArray(padding) ? padding : [padding, padding, padding];
+    const d = Array.isArray(dilation)
+      ? dilation
+      : [dilation, dilation, dilation];
+
+    const scale = Math.sqrt(1.0 / (inChannels * k[0] * k[1] * k[2]));
+    this.weight = random.uniform(-scale, scale, [
+      outChannels,
+      k[0],
+      k[1],
+      k[2],
+      inChannels / groups,
+    ]);
+    if (bias) {
+      this.bias = random.uniform(-scale, scale, [outChannels]);
+    }
+
+    this.padding = p as any;
+    this.stride = s as any;
+    this.dilation = d as any;
+    this.groups = groups;
   }
 
   forward(x: MLXArray): MLXArray {
-    let y = coreConv3d(x, this.weight, this.stride, this.padding, this.dilation);
-    if (this.bias !== undefined) {
+    let y = coreConv3d(x, this.weight, this.stride, this.padding, this.dilation, this.groups);
+    if (this.bias) {
       y = add(y, this.bias);
     }
     return y;
+  }
+
+  __call__(x: MLXArray): MLXArray {
+    return this.forward(x);
   }
 }
