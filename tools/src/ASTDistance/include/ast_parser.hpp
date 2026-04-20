@@ -825,8 +825,33 @@ public:
      * Check if a source file has stub/TODO markers inside function bodies.
      * Returns true if any function body contains these markers.
      * File-level comments are ignored — only code that's pretending to be real.
+     *
+     * Kotlin files with a port-lint header pointing to a module-root file are
+     * always stubs. mod.rs is Rust's module declaration syntax; lib.rs/main.rs
+     * are crate roots; __init__.py is a Python package marker. None have a
+     * Kotlin equivalent. Porting them produces files that carry the source
+     * language's namespace structure into Kotlin where it doesn't belong.
+     * JS/TS index files are intentionally NOT in this list — they contain real
+     * implementation code and must be ported normally.
      */
     bool has_stub_bodies(const std::string& source, Language lang) {
+        if (lang == Language::KOTLIN) {
+            const size_t scan_len = std::min<size_t>(source.size(), 256);
+            const std::string header = source.substr(0, scan_len);
+            const std::string port_lint = "// port-lint: source";
+            auto pos = header.find(port_lint);
+            if (pos != std::string::npos) {
+                auto eol = header.find('\n', pos);
+                std::string line = header.substr(pos, eol == std::string::npos ? std::string::npos : eol - pos);
+                static const std::vector<std::string> module_roots = {
+                    "/mod.rs", "/lib.rs", "/main.rs", "/__init__.py",
+                };
+                for (const auto& root : module_roots) {
+                    if (line.find(root) != std::string::npos) return true;
+                }
+            }
+        }
+
         const TSLanguage* ts_lang;
         switch (lang) {
             case Language::RUST: ts_lang = tree_sitter_rust(); break;
@@ -880,7 +905,9 @@ public:
     bool has_stub_bodies_in_files(const std::vector<std::string>& filepaths, Language lang) {
         for (const auto& filepath : filepaths) {
             std::ifstream file(filepath);
-            if (!file.is_open()) continue;
+            // Fail-safe: an unreadable file cannot be verified as complete.
+            // Treat it as a stub rather than silently passing it.
+            if (!file.is_open()) return true;
             std::stringstream buf;
             buf << file.rdbuf();
             if (has_stub_bodies(buf.str(), lang)) return true;
@@ -1720,6 +1747,39 @@ public:
     }
 
     /**
+     * Check if a Kotlin function node has a @Test annotation (kotlin.test or JUnit).
+     * Kotlin annotations appear as `modifiers` children or preceding `annotation` nodes.
+     */
+    bool has_kotlin_test_annotation(TSNode node, const std::string& source) const {
+        // Scan the function node itself for a `modifiers` child containing @Test.
+        uint32_t child_count = ts_node_child_count(node);
+        for (uint32_t i = 0; i < child_count; ++i) {
+            TSNode child = ts_node_child(node, i);
+            std::string t(ts_node_type(child));
+            if (t == "modifiers" || t == "annotation" ||
+                t == "user_type" /* legacy */) {
+                uint32_t start = ts_node_start_byte(child);
+                uint32_t end = ts_node_end_byte(child);
+                if (end > start && end <= source.length()) {
+                    std::string text = source.substr(start, end - start);
+                    // Match @Test as a whole token (not e.g. @TestConfig).
+                    size_t pos = 0;
+                    while ((pos = text.find("@Test", pos)) != std::string::npos) {
+                        char next = (pos + 5 < text.size()) ? text[pos + 5] : '\0';
+                        // Allow @Test, @Test(...), @Test\n, @Test followed by space.
+                        if (next == '\0' || next == '\n' || next == ' ' ||
+                            next == '\t' || next == '(' || next == '\r') {
+                            return true;
+                        }
+                        pos += 5;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * Check if a node is inside a #[cfg(test)] mod block.
      * Walks up the tree looking for mod_item ancestors with #[cfg(test)].
      */
@@ -2006,6 +2066,9 @@ public:
             if (lang == Language::RUST) {
                 info.is_test = has_test_attribute(node, source) ||
                                is_inside_cfg_test_mod(node, source);
+            } else if (lang == Language::KOTLIN) {
+                // Kotlin @Test annotation (kotlin.test or JUnit).
+                info.is_test = has_kotlin_test_annotation(node, source);
             }
 
             functions.push_back(info);

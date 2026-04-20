@@ -616,6 +616,11 @@ public:
         int matched_function_count = 0;
         float function_coverage = 1.0f;  // matched / source
 
+        // Test-function parity (subset of the function counts above). Tracked
+        // separately so reports can call out missing tests explicitly.
+        int source_test_function_count = 0;
+        int matched_test_function_count = 0;
+
         // Type/class parity (name-based) within a file. This prevents a file from
         // "matching" by AST shape while missing key type declarations.
         int source_type_count = 0;
@@ -639,6 +644,50 @@ public:
             if (target_doc_lines == 0) return 1.0f;  // Target missing all docs
             float ratio = 1.0f - (static_cast<float>(target_doc_lines) / source_doc_lines);
             return std::max(0.0f, ratio);  // Clamp to 0 if target has more
+        }
+
+        // Absolute deficit counts (missing functions + missing types).
+        // Tests are included in function_deficit() because they are real code.
+        int function_deficit() const {
+            return std::max(0, source_function_count - matched_function_count);
+        }
+        int type_deficit() const {
+            return std::max(0, source_type_count - matched_type_count);
+        }
+        int symbol_deficit() const {
+            return function_deficit() + type_deficit();
+        }
+
+        /**
+         * Porting priority score.
+         *
+         * Design rationale:
+         *   - The old formula was `dependents * (1 - similarity)`, which zeroes
+         *     out any file with no dependents (every test file, every leaf
+         *     module). That hid hundreds of real gaps.
+         *   - The new formula makes *symbol deficit* (missing functions +
+         *     missing types) the primary driver — a file with 10 missing
+         *     functions ranks above a file that merely has low AST similarity.
+         *   - Import depth (number of files depending on this one) is kept as
+         *     a multiplicative boost, but log-scaled so that high-fanout files
+         *     don't drown out standalone files with real deficits.
+         *   - Similarity gap is a tiebreaker for files with no explicit
+         *     symbol-level gap.
+         */
+        float priority_score() const {
+            float deficit = static_cast<float>(symbol_deficit());
+            float import_depth = std::log1p(static_cast<float>(source_dependents));
+            float sim_gap = std::max(0.0f, 1.0f - similarity);
+
+            // 10 points per missing symbol; each missing symbol is amplified
+            // by how many downstream files will benefit once it's restored.
+            float deficit_score = deficit * (10.0f + import_depth * 2.0f);
+
+            // For files with no explicit symbol-level gap, fall back to the
+            // old AST-similarity × dependents signal.
+            float shape_score = import_depth * sim_gap * 5.0f;
+
+            return deficit_score + shape_score;
         }
     };
 
@@ -916,9 +965,24 @@ public:
             matched_targets.insert(tgt_path);
         }
 
-        // Find unmatched
+        // Find unmatched. Skip module-root files that are purely declarative
+        // namespace/export wiring with no Kotlin equivalent:
+        //   Rust:   mod.rs (module declaration), lib.rs / main.rs (crate roots)
+        //   Python: __init__.py (package marker)
+        // JS/TS index files are intentionally NOT excluded: index.ts files
+        // contain real implementation code and must be ported.
+        auto is_module_root_path = [](const std::string& p) -> bool {
+            auto ends_with = [&](const std::string& suffix) {
+                return p.size() >= suffix.size() &&
+                       p.compare(p.size() - suffix.size(), suffix.size(), suffix) == 0;
+            };
+            return ends_with("/mod.rs")      || ends_with("\\mod.rs")  ||
+                   ends_with("/lib.rs")      || ends_with("\\lib.rs")  ||
+                   ends_with("/main.rs")     || ends_with("\\main.rs") ||
+                   ends_with("/__init__.py") || ends_with("\\__init__.py");
+        };
         for (const auto& [src_path, _] : source.files) {
-            if (!matched_sources.count(src_path)) {
+            if (!matched_sources.count(src_path) && !is_module_root_path(src_path)) {
                 unmatched_source.push_back(src_path);
             }
         }
@@ -1081,6 +1145,8 @@ public:
         int target_total = 0;
         int matched = 0;
         int source_test_skipped = 0;  // test functions excluded from source count
+        int source_test_count = 0;    // how many source functions were #[test]
+        int matched_test_count = 0;   // how many of those matched in target
         float ratio = 1.0f;
     };
 
@@ -1115,7 +1181,20 @@ public:
             // not in the ported source file.
             if (has_non_test && f.is_test) {
                 cov.source_test_skipped++;
+                cov.source_test_count++;
+                // Still check whether the target has a matching test function.
+                std::string key = IdentifierStats::canonicalize(f.name);
+                if (!key.empty()) {
+                    auto it = tgt_names.find(key);
+                    if (it != tgt_names.end()) {
+                        cov.matched_test_count++;
+                        // Do not erase: test functions are not part of the main coverage count.
+                    }
+                }
                 continue;
+            }
+            if (f.is_test) {
+                cov.source_test_count++;
             }
             std::string key = IdentifierStats::canonicalize(f.name);
             // Rust `Drop` impl methods appear as a `drop` function in function extraction.
@@ -1134,6 +1213,7 @@ public:
             auto it = tgt_names.find(key);
             if (it != tgt_names.end()) {
                 cov.matched++;
+                if (f.is_test) cov.matched_test_count++;
                 tgt_names.erase(it);
             }
         }
@@ -1410,6 +1490,8 @@ public:
                     m.target_function_count = fn_cov.target_total;
                     m.matched_function_count = fn_cov.matched;
                     m.function_coverage = fn_cov.ratio;
+                    m.source_test_function_count = fn_cov.source_test_count;
+                    m.matched_test_function_count = fn_cov.matched_test_count;
 
                     auto ty_cov = type_name_coverage(
                         symbol_src, symbol_tgt, src_lang, tgt_lang, src_file, tgt_file);
@@ -1449,18 +1531,23 @@ public:
 
     /**
      * Get matches sorted by priority for porting.
-     * Priority: high dependents + low similarity = needs attention
+     *
+     * Priority = (missing functions + missing types) × (10 + log1p(dependents) × 2)
+     *          + log1p(dependents) × (1 - similarity) × 5
+     *
+     * Symbol deficits are the primary driver. Import depth is a
+     * multiplicative boost for deficits, and a secondary signal on its own
+     * when deficits are zero. See Match::priority_score() for the full
+     * rationale — this replaces the old `dependents × (1 - similarity)`
+     * formula, which gave priority 0 to any file with no dependents (every
+     * test file, every leaf module) and hid hundreds of real gaps.
      */
     std::vector<Match> ranked_for_porting() {
         auto result = matches;
 
         std::sort(result.begin(), result.end(),
             [](const Match& a, const Match& b) {
-                // Score = dependents * (1 - similarity)
-                // Higher score = more important to port
-                float score_a = a.source_dependents * (1.0f - a.similarity);
-                float score_b = b.source_dependents * (1.0f - b.similarity);
-                return score_a > score_b;
+                return a.priority_score() > b.priority_score();
             });
 
         return result;
@@ -1500,9 +1587,10 @@ public:
 	                    types = std::to_string(m.matched_type_count) + "/" +
 	                            std::to_string(m.source_type_count);
 	                }
-	                float priority = m.source_dependents * (1.0f - m.similarity);
+	                float priority = m.priority_score();
+		                std::string stub_flag = m.is_stub ? " [STUB]" : "";
 		                std::cout << std::setw(30) << std::left << m.source_qualified.substr(0, 28)
-		                          << std::setw(30) << m.target_qualified.substr(0, 28)
+		                          << std::setw(30) << (m.target_qualified.substr(0, 28) + stub_flag)
 		                          << std::setw(10) << std::fixed << std::setprecision(2) << m.similarity
 		                          << std::setw(11) << m.source_dependents
 		                          << std::setw(14) << funcs

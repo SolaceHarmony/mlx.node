@@ -1185,17 +1185,21 @@ void generate_reports(const Codebase& source, const Codebase& target,
     int matched = comp.matches.size();
     float completion_pct = (static_cast<float>(matched) / static_cast<float>(total_source)) * 100.0f;
     
-    // Count quality distribution
+    // Count quality distribution. Stubs are always critical regardless of
+    // whatever similarity score they carry, and are excluded from the average.
     int excellent = 0, good = 0, critical = 0;
     float avg_similarity = 0.0f;
+    int avg_count = 0;
     for (const auto& m : comp.matches) {
+        if (m.is_stub) { critical++; continue; }
         avg_similarity += m.similarity;
+        avg_count++;
         if (m.similarity >= 0.85) excellent++;
         else if (m.similarity >= 0.60) good++;
         else critical++;
     }
-    if (!comp.matches.empty()) {
-        avg_similarity /= comp.matches.size();
+    if (avg_count > 0) {
+        avg_similarity /= avg_count;
     }
     
     // Get current date/time as string
@@ -1238,13 +1242,13 @@ void generate_reports(const Codebase& source, const Codebase& target,
         report << "These files are well-ported and likely complete:\n\n";
         int shown = 0;
         for (const auto& m : ranked) {
-            if (m.similarity >= 0.85 && shown++ < 15) {
+            if (!m.is_stub && m.similarity >= 0.85 && shown++ < 15) {
                 report << "- `" << m.target_qualified << "` (" << std::fixed << std::setprecision(2)
                        << m.similarity << ", " << m.source_dependents << " deps)\n";
             }
         }
         report << "\n";
-        
+
         report << "### Critical Ports (Similarity < 0.60)\n\n";
         report << "These files need significant work:\n\n";
         for (const auto& m : ranked) {
@@ -1352,17 +1356,20 @@ void generate_reports(const Codebase& source, const Codebase& target,
         std::ofstream report("high_priority_ports.md");
         report << "# High Priority Ports - Action Plan\n\n";
         
-        report << "## Top 20 Files by Impact (Priority Score = Deps × (1 - Similarity))\n\n";
-        report << "| Rank | Source | Target | Similarity | Deps | Priority |\n";
-        report << "|------|--------|--------|------------|------|----------|\n";
-        
+        report << "## Top 20 Files by Impact\n\n";
+        report << "Priority = (missing functions + missing types) × (10 + log1p(deps) × 2)"
+                  " + log1p(deps) × (1 − similarity) × 5\n\n";
+        report << "| Rank | Source | Target | Similarity | Deps | SymDeficit | Priority |\n";
+        report << "|------|--------|--------|------------|------|-----------|----------|\n";
+
         int rank = 1;
         for (const auto& m : ranked) {
             if (rank <= 20) {
-                float priority = m.source_dependents * (1.0f - m.similarity);
+                float priority = m.priority_score();
                 report << "| " << rank++ << " | `" << m.source_qualified << "` | `"
                        << m.target_qualified << "` | " << std::fixed << std::setprecision(2)
                        << m.similarity << " | " << m.source_dependents << " | "
+                       << m.symbol_deficit() << " | "
                        << std::fixed << std::setprecision(1) << priority << " |\n";
             }
         }
@@ -2012,6 +2019,7 @@ void cmd_missing(const std::string& src_dir, const std::string& src_lang,
 
     CodebaseComparator comp(source, target);
     comp.find_matches();
+    comp.compute_similarities();
 
     std::cout << "=== Missing from " << tgt_lang << " (ranked by dependents) ===\n\n";
     std::cout << std::setw(40) << std::left << "Source File"
