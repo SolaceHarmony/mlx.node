@@ -3223,7 +3223,7 @@ void cmd_release(const std::string& task_file, const std::string& source_qualifi
         float similarity = 0.0f;
 
         // Require no stub bodies (e.g., Kotlin TODO(), Rust unimplemented!(), Python pass/...)
-        has_stubs = parser.has_stub_bodies_in_files({target_path.string()}, tgt_lang);
+        has_stubs = has_stubs || parser.has_stub_bodies_in_files({target_path.string()}, tgt_lang);
         if (has_stubs) {
             std::cerr << "Error: Cannot release task - target file contains stub/TODO markers in function bodies\n";
             std::cerr << "The code is fake. Complete the real implementation or delete the file.\n";
@@ -3799,8 +3799,9 @@ int main(int argc, char* argv[]) {
             bool file2_stubs = parser.has_stub_bodies_in_files({file2}, lang2);
 
             if (function_scored) {
-                file1_stubs = function_result.has_source_stub;
-                file2_stubs = function_result.has_target_stub;
+                file1_stubs |= function_result.has_source_stub;
+                file2_stubs |= function_result.has_target_stub;
+                if (file2_stubs) { content_score = 0.0f; goto stub_check; }
 
                 // Blend function-level similarity with file-level structural metrics.
                 // The function-level score (per-body identifier matching) is reliable
@@ -3862,6 +3863,7 @@ int main(int argc, char* argv[]) {
 
             // IMPORTANT: stubs in the *target* indicate incomplete transliteration and should gate completion.
             // Stubs in the *source* are treated as baseline and should not force similarity to zero.
+            stub_check:
             if (file2_stubs) {
                 content_score = 0.0f;
                 std::cout << "\n*** STUB DETECTED ***\n";
