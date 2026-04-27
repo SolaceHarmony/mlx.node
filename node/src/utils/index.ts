@@ -7,6 +7,8 @@ export {
   tree_merge,
 } from './tree';
 
+export { Store } from './store';
+
 export type { TreeVisitOptions, TreeFlattenOptions } from './tree';
 
 export {

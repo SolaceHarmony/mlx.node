@@ -5,6 +5,7 @@ import { toNativeStreamArgument } from './stream';
 import type { DTypeLike } from './dtype';
 import type { Device, DeviceLike } from './device';
 import { normalizeDevice } from './device';
+import { tree_flatten } from '../utils/tree';
 
 function toNativeHandle(tensor: MLXArray): any {
   if (tensor && typeof tensor === 'object' && 'toNative' in (tensor as any)) {
@@ -175,6 +176,7 @@ function toNativeScalarOrArray(value: ScalarOrArray): any {
   if (Array.isArray(value)) {
     return toNativeHandle(from_js_array(value as any));
   }
+  // Return raw scalar for native inference in Add, Multiply, etc.
   return value;
 }
 
@@ -351,14 +353,39 @@ export function save(file: string, a: ScalarOrArray, options?: StreamOptions): v
   addon.save(...args);
 }
 
-export function save_safetensors(file: string, a: ScalarOrArray, options?: SaveSafetensorsOptions): void {
-  const args: any[] = [file, toNativeScalarOrArray(a)];
+export function save_safetensors(file: string, a: any, options?: SaveSafetensorsOptions): void {
+  const flattened = tree_flatten(a, { isLeaf: (v) => v && typeof v === 'object' && 'toNative' in (v as any) });
+  const dict: Record<string, any> = {};
+  if (Array.isArray(flattened)) {
+      for (const [key, value] of flattened) {
+          dict[key] = toNativeScalarOrArray(value as any);
+      }
+  } else {
+      for (const [key, value] of Object.entries(flattened)) {
+          dict[key] = toNativeScalarOrArray(value as any);
+      }
+  }
+  const args: any[] = [file, dict];
+  if (options?.metadata) {
+      args.push(options.metadata);
+  }
   appendStreamArg(args, options?.stream);
   addon.save_safetensors(...args);
 }
 
-export function save_gguf(file: string, a: ScalarOrArray, options?: StreamOptions): void {
-  const args: any[] = [file, toNativeScalarOrArray(a)];
+export function save_gguf(file: string, a: any, options?: StreamOptions): void {
+  const flattened = tree_flatten(a, { isLeaf: (v) => v && typeof v === 'object' && 'toNative' in (v as any) });
+  const dict: Record<string, any> = {};
+  if (Array.isArray(flattened)) {
+      for (const [key, value] of flattened) {
+          dict[key] = toNativeScalarOrArray(value as any);
+      }
+  } else {
+      for (const [key, value] of Object.entries(flattened)) {
+          dict[key] = toNativeScalarOrArray(value as any);
+      }
+  }
+  const args: any[] = [file, dict];
   appendStreamArg(args, options?.stream);
   addon.save_gguf(...args);
 }

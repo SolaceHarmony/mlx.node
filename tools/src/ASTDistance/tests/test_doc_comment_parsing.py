@@ -1,7 +1,8 @@
 import re
-import subprocess
 import sys
 from pathlib import Path
+
+from pty_run import run_with_pty
 
 
 def parse_first_kotlin_comment_stats(output: str) -> tuple[int, int]:
@@ -28,12 +29,8 @@ def main() -> int:
     ast_distance = Path(sys.argv[1])
     fixture = Path(sys.argv[2])
 
-    proc = subprocess.run(
+    proc = run_with_pty(
         [str(ast_distance), str(fixture), "kotlin", str(fixture), "kotlin"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        check=True,
     )
     out = proc.stdout
 
@@ -54,4 +51,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -41,7 +41,23 @@ export interface DTypeCategory {
   toString(): string;
 }
 
-export type DTypeLike = MLXDtype | DTypeCategory;
+export type DTypeLike = MLXDtype | DTypeCategory | DTypeKey;
+
+/**
+ * Normalizes a DTypeLike value to a native MLXDtype object.
+ */
+export function toDtypeObject(dtype?: DTypeLike): MLXDtype | undefined {
+  if (dtype === undefined) {
+    return undefined;
+  }
+  if (typeof dtype === 'string') {
+    return (addon.Dtype as any).fromString(dtype);
+  }
+  if ('key' in dtype) {
+    return dtype as MLXDtype;
+  }
+  return undefined;
+}
 
 const nativeDtype = addon.dtype as Record<string, unknown> & {
   fromString: (key: string) => MLXDtype;

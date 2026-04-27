@@ -265,7 +265,7 @@ describe('TestLayers', () => {
       const x = array(data, [1, 1, 4], 'float32');
       const y = nn.glu(x);
       assert.deepEqual(y.shape, [1, 1, 2]);
-      const vals = y.toArray() as number[];
+      const vals = (y.toArray() as any).flat(Infinity);
       assert.ok(Math.abs(vals[0] - 0.952574) < 1e-4);
       assert.ok(Math.abs(vals[1] - 1.96403) < 1e-4);
     });
@@ -494,7 +494,7 @@ describe('TestLayers', () => {
       assert.deepEqual(y.shape, [2, 3, 3]);
       // Expected: [[[3,4,5],[6,7,8],[9,10,11]],[[15,16,17],[18,19,20],[21,22,23]]]
       const expected = [3,4,5, 6,7,8, 9,10,11, 15,16,17, 18,19,20, 21,22,23];
-      const vals = y.toArray() as number[];
+      const vals = (y.toArray() as any).flat(Infinity);
       for (let i = 0; i < expected.length; i++) {
         assert.equal(vals[i], expected[i]);
       }
@@ -515,7 +515,7 @@ describe('TestLayers', () => {
       assert.deepEqual(y.shape, [2, 3, 3]);
       const expected = [1.5,2.5,3.5, 4.5,5.5,6.5, 7.5,8.5,9.5,
                         13.5,14.5,15.5, 16.5,17.5,18.5, 19.5,20.5,21.5];
-      const vals = y.toArray() as number[];
+      const vals = (y.toArray() as any).flat(Infinity);
       for (let i = 0; i < expected.length; i++) {
         assert.ok(Math.abs(vals[i] - expected[i]) < 1e-4, `element ${i}: ${vals[i]} vs ${expected[i]}`);
       }
@@ -626,7 +626,7 @@ describe('TestLayers', () => {
     it('constant initializer', () => {
       const fn = nn.init.constant(7.0);
       const w = fn(zeros([3, 3]));
-      const vals = w.toArray() as number[];
+      const vals = (w.toArray() as any).flat(Infinity) as number[];
       assert.ok(vals.every((v) => Math.abs(v - 7.0) < 1e-6));
     });
   });

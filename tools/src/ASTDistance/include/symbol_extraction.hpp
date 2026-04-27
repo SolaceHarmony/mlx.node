@@ -17,14 +17,9 @@
 extern "C" {
     const TSLanguage* tree_sitter_rust();
     const TSLanguage* tree_sitter_kotlin();
-    const TSLanguage* tree_sitter_python();
-    const TSLanguage* tree_sitter_typescript();
 }
 
 namespace ast_distance {
-
-// Forward declaration or helper
-const char* language_name(Language lang);
 
 enum class SymbolKind {
     FUNCTION,
@@ -125,21 +120,21 @@ struct SymbolTable {
 };
 
 struct SymbolMatch {
-    const Symbol* source_symbol = nullptr;
-    const Symbol* target_symbol = nullptr;
+    const Symbol* rust_symbol = nullptr;
+    const Symbol* kotlin_symbol = nullptr;
     float confidence = 0.0f;
     std::string match_reason;  // "exact", "camelCase", "qualified"
 };
 
 struct SymbolParityReport {
     std::vector<SymbolMatch> matches;
-    std::vector<const Symbol*> missing_in_target;
-    std::vector<const Symbol*> extra_in_target;
+    std::vector<const Symbol*> missing_in_kotlin;
+    std::vector<const Symbol*> extra_in_kotlin;
     std::map<SymbolKind, std::pair<int, int>> coverage;       // matched/total per kind (production)
     std::map<SymbolKind, std::pair<int, int>> test_coverage;  // matched/total per kind (tests)
-    int stub_count = 0;                                        // target stubs detected
+    int stub_count = 0;                                        // Kotlin stubs detected
 
-    void print(Language src_lang, Language tgt_lang, bool verbose = true, bool missing_only = false) const;
+    void print(bool verbose = true, bool missing_only = false) const;
     void print_json() const;
 };
 
@@ -147,7 +142,7 @@ struct SymbolParityOptions {
     Language source_lang = Language::RUST;
     Language target_lang = Language::KOTLIN;
     bool json = false;
-    bool verbose = false;
+    bool verbose = true;
     bool missing_only = false;     // Show only missing symbols
     bool include_stubs = false;    // Include target stubs in "extra" count
     std::string filter_kind;
@@ -159,18 +154,15 @@ std::string snake_to_camel(const std::string& snake);
 std::string rust_qualified_to_kotlin(const std::string& qualified);
 
 // Extract symbols from a codebase root
-SymbolTable extract_symbols(const std::string& root, Language lang);
 SymbolTable extract_rust_symbols(const std::string& root);
 SymbolTable extract_kotlin_symbols(const std::string& root);
-SymbolTable extract_python_symbols(const std::string& root);
-SymbolTable extract_typescript_symbols(const std::string& root);
 
 // Build parity report
-SymbolParityReport build_parity_report(const SymbolTable& source, const SymbolTable& target, Language src_lang, Language tgt_lang);
+SymbolParityReport build_parity_report(const SymbolTable& rust, const SymbolTable& kotlin);
 
 // CLI command
-void cmd_symbol_parity(const std::string& source_root,
-                       const std::string& target_root,
+void cmd_symbol_parity(const std::string& rust_root,
+                       const std::string& kotlin_root,
                        const SymbolParityOptions& options);
 
 // ============================================================================

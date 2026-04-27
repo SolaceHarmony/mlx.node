@@ -192,6 +192,30 @@ export abstract class Module {
     return this;
   }
 
+  /**
+   * Update the parameters of the module with the given parameters.
+   */
+  update(parameters: any): this {
+    const flattened = tree_flatten(parameters, { isLeaf: (v) => v instanceof MLXArray }) as [string, any][];
+    const currentParams = this.parameters();
+    for (const [key, value] of flattened) {
+      const parts = key.split('.');
+      let obj = currentParams as any;
+      for (let i = 0; i < parts.length - 1; i++) {
+        obj = obj[parts[i]];
+      }
+      obj[parts[parts.length - 1]] = value;
+    }
+    return this;
+  }
+
+  /**
+   * Return the parameters of the module as a dictionary.
+   */
+  state_dict(): any {
+    return this.parameters();
+  }
+
   /** Set the training mode. */
   train(mode: boolean = true): this {
     this._training = mode;
