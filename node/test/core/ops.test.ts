@@ -681,3 +681,22 @@ describe('import_function', () => {
   // 2. Running on macOS with Metal support
   // These tests ensure the API exists and has the correct signature
 });
+
+describe('distributed ops', () => {
+  it('distributed.all_sum is available', () => {
+    assert.strictEqual(typeof mx.distributed.all_sum, 'function');
+  });
+
+  it('distributed.all_sum returns input unchanged in single-process mode', () => {
+    const a = mx.from_js_array([1, 2, 3], mx.float32);
+    const result = mx.distributed.all_sum(a);
+    assert.deepEqual(toArray(result), [1, 2, 3]);
+    assert.deepEqual(result.shape, [3]);
+  });
+
+  it('distributed.all_sum preserves dtype', () => {
+    const a = mx.from_js_array([1.5, 2.5, 3.5], mx.float32);
+    const result = mx.distributed.all_sum(a);
+    assert.strictEqual(result.dtype, 'float32');
+  });
+});

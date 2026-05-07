@@ -201,6 +201,7 @@ export const expm1 = (...args: any[]) => coreNamespace.expm1(...args);
 export const eye = (...args: any[]) => coreNamespace.eye(...args);
 export const fast = coreNamespace.fast;
 export const fft = coreNamespace.fft;
+export const distributed = coreNamespace.distributed;
 export const flatten = (...args: any[]) => coreNamespace.flatten(...args);
 export const floor_divide = (...args: any[]) => coreNamespace.floor_divide(...args);
 export const identity = (...args: any[]) => coreNamespace.identity(...args);

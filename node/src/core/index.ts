@@ -99,6 +99,7 @@ export const core = {
   get as_strided() { return opsModule.as_strided; },
   get number_of_elements() { return opsModule.number_of_elements; },
   get fast() { return opsModule.fast; },
+  get distributed() { return opsModule.distributed; },
   get linalg() { return opsModule.linalg; },
   get trace() { return opsModule.trace; },
   get ceil() { return opsModule.ceil; },
@@ -362,6 +363,7 @@ export const slice = (...args: any[]) => core.slice(...args);
 export const as_strided = (...args: any[]) => core.as_strided(...args);
 export const number_of_elements = (...args: any[]) => core.number_of_elements(...args);
 export const fast = core.fast;
+export const distributed = core.distributed;
 export const linalg = core.linalg;
 export const trace = (...args: any[]) => core.trace(...args);
 export const ceil = (...args: any[]) => core.ceil(...args);

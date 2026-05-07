@@ -344,7 +344,7 @@
 - [ ] `all_gather`
 - [ ] `all_max`
 - [ ] `all_min`
-- [ ] `all_sum`
+- [x] `all_sum`
 - [ ] `init`
 - [ ] `recv`
 - [ ] `recv_like`

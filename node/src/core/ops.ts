@@ -1597,6 +1597,15 @@ export namespace fast {
   }
 }
 
+/** Distributed communication operations (mlx.core.distributed). */
+export namespace distributed {
+  export function all_sum(x: MLXArray, options?: StreamOptions): MLXArray {
+    const args: any[] = [toNativeHandle(x)];
+    appendStreamArg(args, options?.stream);
+    return MLXArray.fromHandle(addon.distributed.all_sum(...args));
+  }
+}
+
 /** Random number generation functions (mlx.core.random). */
 export namespace random {
   export function seed(s: number): void {

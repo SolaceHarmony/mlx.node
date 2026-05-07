@@ -28,6 +28,7 @@
 #include "mlx/device.h"
 #include "mlx/einsum.h"
 #include "mlx/graph_utils.h"
+#include "mlx/distributed/ops.h"
 #include "mlx_bridge.h"
 
 #include "dtype.h"
@@ -8819,6 +8820,33 @@ class ArrayBuilderWrapper : public Napi::ObjectWrap<ArrayBuilderWrapper> {
   bool                         built_{false};
 };
 
+// ===========================================================================
+// Distributed ops (mlx.core.distributed)
+// ===========================================================================
+
+Napi::Value AllSum(const Napi::CallbackInfo& info) {
+  auto env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "all_sum expects at least one argument")
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  auto a = ToArray(env, info[0]);
+  if (env.IsExceptionPending()) return env.Null();
+
+  auto streamArg = GetStreamArgument(info, 1);
+  if (env.IsExceptionPending()) return env.Null();
+
+  try {
+    auto result = mlx::core::distributed::all_sum(a, std::nullopt, streamArg);
+    return WrapArray(env, std::make_shared<mlx::core::array>(std::move(result)));
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, std::string("all_sum failed: ") + e.what())
+        .ThrowAsJavaScriptException();
+    return env.Null();
+  }
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   // Defer GPU initialization to the first op to avoid loader-time hazards.
   auto& data = mlx::node::GetAddonData(env);
@@ -9161,6 +9189,11 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   core.Set("save", Napi::Function::New(env, Save, "save", &data));
   core.Set("save_safetensors", Napi::Function::New(env, SaveSafetensors, "save_safetensors", &data));
   core.Set("save_gguf", Napi::Function::New(env, SaveGguf, "save_gguf", &data));
+
+  // Distributed ops namespace (mlx.core.distributed)
+  Napi::Object distributed = Napi::Object::New(env);
+  distributed.Set("all_sum", Napi::Function::New(env, AllSum, "all_sum", &data));
+  core.Set("distributed", distributed);
 
   mlx.Set("core", core);
   mlx.Set("nn_init", nn_init);
