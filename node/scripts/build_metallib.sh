@@ -21,11 +21,15 @@ fi
 
 if [ "${METAL_VERSION}" -ge 320 ]; then
   VERSION_INCLUDE="${KERNEL_DIR}/metal_3_1"
+  METAL_STD="metal3.1"
 else
   VERSION_INCLUDE="${KERNEL_DIR}/metal_3_0"
+  METAL_STD="metal3.0"
 fi
 
-COMMON_FLAGS="-Wall -Wextra -fno-fast-math -Wno-c++17-extensions"
+echo "Using Metal language standard: ${METAL_STD}"
+
+COMMON_FLAGS="-Wall -Wextra -fno-fast-math -Wno-c++17-extensions -std=${METAL_STD}"
 if [ -n "${MACOSX_DEPLOYMENT_TARGET:-}" ]; then
   COMMON_FLAGS="${COMMON_FLAGS} -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
 fi
