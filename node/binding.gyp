@@ -72,6 +72,15 @@
       },
       "actions": [
         {
+          "action_name": "build_metallib",
+          "inputs": [ "scripts/build_metallib.sh" ],
+          "outputs": [ "<(module_root_dir)/build/build_metallib.stamp" ],
+          "action": [
+            "bash", "-lc",
+            "mkdir -p '<(module_root_dir)/build' && if [ \"$(uname)\" = \"Darwin\" ]; then ./scripts/build_metallib.sh; fi && touch '<(module_root_dir)/build/build_metallib.stamp'"
+          ]
+        },
+        {
           "action_name": "generate_metal_jit",
           "inputs": [ "scripts/gen_mlx_metal_jit.sh", "../mlx/backend/metal/make_compiled_preamble.sh" ],
           "outputs": [
