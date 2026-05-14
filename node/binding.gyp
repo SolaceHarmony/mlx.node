@@ -73,11 +73,11 @@
       "actions": [
         {
           "action_name": "build_metallib",
-          "inputs": [ "scripts/build_metallib.sh" ],
+          "inputs": [ "scripts/build_metallib.sh", "scripts/build_metallib_if_needed.sh" ],
           "outputs": [ "<(module_root_dir)/build/build_metallib.stamp" ],
           "action": [
-            "bash", "-lc",
-            "mkdir -p '<(module_root_dir)/build' && if [ \"$(uname)\" = \"Darwin\" ]; then ./scripts/build_metallib.sh; fi && touch '<(module_root_dir)/build/build_metallib.stamp'"
+            "bash", "-c",
+            "./scripts/build_metallib_if_needed.sh"
           ]
         },
         {
