@@ -4,7 +4,7 @@ import type { StreamLike } from './stream';
 import { toNativeStreamArgument } from './stream';
 import type { DTypeLike } from './dtype';
 import type { Device, DeviceLike } from './device';
-import { normalizeDevice } from './device';
+import { cpu as cpuDevice, normalizeDevice } from './device';
 import { tree_flatten } from '../utils/tree';
 
 function toNativeHandle(tensor: MLXArray): any {
@@ -1813,7 +1813,8 @@ export namespace random {
       if (d) args.push(d);
     }
     if (options?.key) args.push(toNativeHandle(options.key));
-    appendStreamArg(args, options?.stream);
+    // `multivariate_normal` depends on `linalg::svd`, which is CPU-only today.
+    appendStreamArg(args, options?.stream ?? cpuDevice);
     return MLXArray.fromHandle(addon.random.multivariate_normal(...args));
   }
 }

@@ -6091,20 +6091,37 @@ Napi::Value RandomMultivariateNormal(const Napi::CallbackInfo& info) {
     nextIdx++;
   }
   std::optional<mlx::core::array> key = std::nullopt;
-  if (info.Length() > nextIdx) {
-    if (info[nextIdx].IsObject() && !info[nextIdx].IsArray() && !info[nextIdx].IsNull()) {
-      auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
-          info[nextIdx].As<Napi::Object>());
-      if (wrapper) { key = std::make_optional<mlx::core::array>(wrapper->tensor()); }
+  if (info.Length() > nextIdx && info[nextIdx].IsObject() &&
+      !info[nextIdx].IsArray() && !info[nextIdx].IsNull()) {
+    auto wrapper = Napi::ObjectWrap<ArrayWrapper>::Unwrap(
+        info[nextIdx].As<Napi::Object>());
+    if (wrapper) {
+      key = std::make_optional<mlx::core::array>(wrapper->tensor());
+      nextIdx++;
     }
-    nextIdx++;
   }
-  auto streamArg = GetStreamArgument(info, nextIdx);
+  // This op depends on `linalg::svd`, which is CPU-only today, so default to CPU
+  // when no explicit stream/device is provided.
+  mlx::core::StreamOrDevice streamArg = mlx::core::Device::cpu;
+  for (size_t i = nextIdx; i < info.Length(); ++i) {
+    if (info[i].IsObject() && !info[i].IsArray() && !info[i].IsNull()) {
+      auto obj = info[i].As<Napi::Object>();
+      if (obj.Has("stream_id") || obj.Has("device") || obj.Has("type")) {
+        streamArg = ParseStreamOrDeviceValue(env, info[i]);
+        break;
+      }
+    }
+  }
   if (env.IsExceptionPending()) return env.Null();
-  return WrapArray(env,
-      std::make_shared<mlx::core::array>(
-          mlx::core::random::multivariate_normal(
-              mean, cov, shape, dtype, key, streamArg)));
+  try {
+    return WrapArray(env,
+        std::make_shared<mlx::core::array>(
+            mlx::core::random::multivariate_normal(
+                mean, cov, shape, dtype, key, streamArg)));
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
 }
 
 // ===========================================================================
@@ -7890,11 +7907,16 @@ Napi::Value LinalgSvd(const Napi::CallbackInfo& info) {
   auto env = info.Env();
   auto a = ToArray(env, info[0]); if (env.IsExceptionPending()) return env.Null();
   auto s = LinalgStreamDefault(info, 1); if (env.IsExceptionPending()) return env.Null();
-  auto result = mlx::core::linalg::svd(a, s);
-  auto js = Napi::Array::New(env, result.size());
-  for (size_t i = 0; i < result.size(); i++)
-    js.Set(i, WrapArray(env, std::make_shared<mlx::core::array>(std::move(result[i]))));
-  return js;
+  try {
+    auto result = mlx::core::linalg::svd(a, s);
+    auto js = Napi::Array::New(env, result.size());
+    for (size_t i = 0; i < result.size(); i++)
+      js.Set(i, WrapArray(env, std::make_shared<mlx::core::array>(std::move(result[i]))));
+    return js;
+  } catch (const std::exception& e) {
+    Napi::Error::New(env, e.what()).ThrowAsJavaScriptException();
+    return env.Null();
+  }
 }
 
 Napi::Value LinalgQr(const Napi::CallbackInfo& info) {
