@@ -45,9 +45,9 @@ for metal_file in "${KERNEL_DIR}"/*.metal; do
   output_file="${AIR_DIR}/$(basename "${metal_file}" .metal).air"
   echo "Compiling ${rel_path}"
   xcrun -sdk macosx metal ${COMMON_FLAGS} \
-    -I"${ROOT_DIR}/vendor" \
-    -I"${KERNEL_DIR}" \
     -I"${VERSION_INCLUDE}" \
+    -I"${KERNEL_DIR}" \
+    -I"${ROOT_DIR}/vendor" \
     -c "${metal_file}" \
     -o "${output_file}"
   count=$((count + 1))
