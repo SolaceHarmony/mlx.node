@@ -72,6 +72,22 @@
       },
       "actions": [
         {
+          "action_name": "build_metallib",
+          "inputs": [
+            "scripts/build_metallib.sh",
+            "scripts/build_metallib_if_needed.sh",
+            "<!@(cd <(module_root_dir) && find vendor/mlx/backend/metal/kernels -type f \\( -name '*.metal' -o -name '*.h' \\) | LC_ALL=C sort)"
+          ],
+          "outputs": [
+            "<(module_root_dir)/build/build_metallib.stamp",
+            "<(module_root_dir)/vendor/mlx/backend/metal/kernels/mlx.metallib"
+          ],
+          "action": [
+            "bash", "-c",
+            "./scripts/build_metallib_if_needed.sh"
+          ]
+        },
+        {
           "action_name": "generate_metal_jit",
           "inputs": [ "scripts/gen_mlx_metal_jit.sh", "../mlx/backend/metal/make_compiled_preamble.sh" ],
           "outputs": [

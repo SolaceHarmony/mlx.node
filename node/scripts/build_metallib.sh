@@ -21,11 +21,15 @@ fi
 
 if [ "${METAL_VERSION}" -ge 320 ]; then
   VERSION_INCLUDE="${KERNEL_DIR}/metal_3_1"
+  METAL_STD="metal3.1"
 else
   VERSION_INCLUDE="${KERNEL_DIR}/metal_3_0"
+  METAL_STD="metal3.0"
 fi
 
-COMMON_FLAGS="-Wall -Wextra -fno-fast-math -Wno-c++17-extensions"
+echo "Using Metal language standard: ${METAL_STD}"
+
+COMMON_FLAGS="-Wall -Wextra -fno-fast-math -Wno-c++17-extensions -std=${METAL_STD}"
 if [ -n "${MACOSX_DEPLOYMENT_TARGET:-}" ]; then
   COMMON_FLAGS="${COMMON_FLAGS} -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
 fi
@@ -41,9 +45,9 @@ for metal_file in "${KERNEL_DIR}"/*.metal; do
   output_file="${AIR_DIR}/$(basename "${metal_file}" .metal).air"
   echo "Compiling ${rel_path}"
   xcrun -sdk macosx metal ${COMMON_FLAGS} \
-    -I"${ROOT_DIR}/vendor" \
-    -I"${KERNEL_DIR}" \
     -I"${VERSION_INCLUDE}" \
+    -I"${KERNEL_DIR}" \
+    -I"${ROOT_DIR}/vendor" \
     -c "${metal_file}" \
     -o "${output_file}"
   count=$((count + 1))
